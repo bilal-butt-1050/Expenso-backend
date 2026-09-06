@@ -1,0 +1,102 @@
+// Expenso — database schema
+// One Postgres database, one row of data per user. Every model that holds
+// user data carries a `userId` and cascades on delete so removing a user
+// cleans up everything they own.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  currency     String   @default("PKR")
+  savingsGoal  Float    @default(0) // monthly savings target, editable in Settings
+  createdAt    DateTime @default(now())
+
+  categories Category[]
+  expenses   Expense[]
+  incomes    Income[]
+  budgets    Budget[]
+
+  @@map("users")
+}
+
+// A category belongs to exactly one user. Every user gets a set of default
+// categories seeded on signup (isDefault = true), and can add their own
+// custom ones (isDefault = false) or edit/delete any of them.
+model Category {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  icon      String   @default("shape-outline") // MaterialCommunityIcons name
+  color     String   @default("#00E676")
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  expenses Expense[]
+  budgets  Budget[]
+
+  @@unique([userId, name])
+  @@map("categories")
+}
+
+model Expense {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId    String
+  category      Category @relation(fields: [categoryId], references: [id])
+  date          DateTime
+  month         String // "YYYY-MM", denormalized for fast month filtering
+  description   String?
+  amount        Float
+  paymentMethod String   @default("Cash")
+  needWant      String   @default("Need") // "Need" | "Want"
+  status        String   @default("Paid") // "Paid" | "Unpaid"
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId, month])
+  @@index([userId, categoryId])
+  @@map("expenses")
+}
+
+// Stores user income records for a given month.
+model Income {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  month       String // "YYYY-MM"
+  salary      Float    @default(0)
+  bonus       Float    @default(0)
+  otherIncome Float    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, month])
+  @@map("incomes")
+}
+
+// Standing monthly budget allocations per category.
+model Budget {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  amount     Float
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, categoryId])
+  @@map("budgets")
+}
