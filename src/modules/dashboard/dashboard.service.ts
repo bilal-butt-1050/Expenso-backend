@@ -25,14 +25,71 @@ export async function getDashboardSummary(userId: string, month: string) {
   );
   const unpaidExpenses = totalExpenses - paidExpenses;
 
-  const remainingBalance = monthlyIncome - paidExpenses;
-  const projectedBalance = remainingBalance - unpaidExpenses;
+  // True net balance for the month (Monthly Income - Total Expenses)
+  const remainingBalance = monthlyIncome - totalExpenses;
+  // Actual liquidity in hand (Monthly Income - Paid Expenses)
+  const cashInHand = monthlyIncome - paidExpenses;
+
+  // Calculate calendar days and remaining days for daily allowance
+  const [yearStr, monthStr] = month.split("-");
+  const year = parseInt(yearStr, 10);
+  const monthNum = parseInt(monthStr, 10);
+  const daysInMonth = new Date(year, monthNum, 0).getDate();
+
+  const now = new Date();
+  const currentY = now.getFullYear();
+  const currentM = now.getMonth() + 1;
+  const currentD = now.getDate();
+
+  let daysElapsed = daysInMonth;
+  let daysRemaining = 0;
+
+  if (year === currentY && monthNum === currentM) {
+    daysElapsed = currentD;
+    daysRemaining = Math.max(1, daysInMonth - currentD + 1);
+  } else if (year > currentY || (year === currentY && monthNum > currentM)) {
+    daysElapsed = 0;
+    daysRemaining = daysInMonth;
+  } else {
+    daysElapsed = daysInMonth;
+    daysRemaining = 0;
+  }
+
+  const dailyAllowance =
+    daysRemaining > 0 && remainingBalance > 0
+      ? Math.round(remainingBalance / daysRemaining)
+      : 0;
+
+  // Needs vs Wants breakdown
+  const needsTotal = sum(
+    monthExpenses.filter((e) => e.needWant === "Need"),
+    (e) => e.amount
+  );
+  const wantsTotal = sum(
+    monthExpenses.filter((e) => e.needWant === "Want"),
+    (e) => e.amount
+  );
+  const needsPercentage = totalExpenses > 0 ? Math.round((needsTotal / totalExpenses) * 100) : 0;
+  const wantsPercentage = totalExpenses > 0 ? Math.round((wantsTotal / totalExpenses) * 100) : 0;
+
+  // Month Pacing calculation
+  const monthProgressPercentage = Math.round((daysElapsed / daysInMonth) * 100);
+  const spentPercentage = monthlyIncome > 0 ? Math.round((totalExpenses / monthlyIncome) * 100) : 0;
+
+  let pacingStatus: "On Track" | "Pacing Fast" | "Over Budget" = "On Track";
+  if (totalExpenses > monthlyIncome && monthlyIncome > 0) {
+    pacingStatus = "Over Budget";
+  } else if (spentPercentage > monthProgressPercentage + 15) {
+    pacingStatus = "Pacing Fast";
+  } else {
+    pacingStatus = "On Track";
+  }
 
   const allTimeIncome =
     (allIncome._sum.salary ?? 0) + (allIncome._sum.bonus ?? 0) + (allIncome._sum.otherIncome ?? 0);
   const allTimePaidExpenses = allPaidExpensesAgg._sum.amount ?? 0;
   const savingsAllTime = allTimeIncome - allTimePaidExpenses;
-  const savingsPercentage = monthlyIncome > 0 ? remainingBalance / monthlyIncome : 0;
+  const savingsPercentage = monthlyIncome > 0 ? Math.max(0, remainingBalance / monthlyIncome) : 0;
 
   const categoryBreakdown = categories
     .map((c) => ({
@@ -65,7 +122,7 @@ export async function getDashboardSummary(userId: string, month: string) {
       actual,
       unpaid,
       remaining,
-      status: remaining >= 0 ? "On Track" : "Over Budget",
+      status: (remaining >= 0 ? "On Track" : "Over Budget") as "On Track" | "Over Budget",
     };
   });
 
@@ -78,9 +135,20 @@ export async function getDashboardSummary(userId: string, month: string) {
     paidExpenses,
     unpaidExpenses,
     remainingBalance,
-    projectedBalance,
+    cashInHand,
+    projectedBalance: remainingBalance,
     savingsAllTime,
     savingsPercentage,
+    dailyAllowance,
+    daysRemaining,
+    daysInMonth,
+    needsTotal,
+    wantsTotal,
+    needsPercentage,
+    wantsPercentage,
+    monthProgressPercentage,
+    spentPercentage,
+    pacingStatus,
     categoryBreakdown,
     budgetVsActual,
     trend,
