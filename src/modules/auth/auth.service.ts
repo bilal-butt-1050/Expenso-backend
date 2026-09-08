@@ -62,6 +62,17 @@ export async function getUserById(userId: string) {
   return toPublicUser(user);
 }
 
+export async function updateUserProfile(
+  userId: string,
+  data: { name?: string; savingsGoal?: number; currency?: string }
+) {
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data,
+  });
+  return toPublicUser(user);
+}
+
 // Never leak the password hash back to a client.
 function toPublicUser(user: {
   id: string;

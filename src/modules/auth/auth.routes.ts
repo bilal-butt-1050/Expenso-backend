@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
-import { registerUser, loginUser, getUserById } from "./auth.service";
+import { registerUser, loginUser, getUserById, updateUserProfile } from "./auth.service";
 
 export const authRouter = Router();
 
@@ -15,6 +15,12 @@ const registerSchema = z.object({
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+});
+
+const updateProfileSchema = z.object({
+  name: z.string().min(1).optional(),
+  savingsGoal: z.number().min(0).max(100).optional(),
+  currency: z.string().min(1).optional(),
 });
 
 authRouter.post(
@@ -40,6 +46,16 @@ authRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const user = await getUserById(req.userId!);
+    res.json(user);
+  })
+);
+
+authRouter.patch(
+  "/profile",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const body = updateProfileSchema.parse(req.body);
+    const user = await updateUserProfile(req.userId!, body);
     res.json(user);
   })
 );
