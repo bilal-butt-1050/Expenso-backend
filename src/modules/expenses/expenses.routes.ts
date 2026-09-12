@@ -18,7 +18,7 @@ const expenseSchema = z.object({
   date: z.coerce.date(),
   description: z.string().max(200).optional(),
   amount: z.number().positive(),
-  paymentMethod: z.enum(["Cash", "Bank", "Card", "Easypaisa", "JazzCash"]).optional(),
+  paymentMethod: z.enum(["Cash", "Bank Transfer", "Card", "Cheque"]).optional(),
   needWant: z.enum(["Need", "Want"]).optional(),
   status: z.enum(["Paid", "Unpaid"]).optional(),
 });
