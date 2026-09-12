@@ -6,17 +6,25 @@ import { trailingMonths } from "../../utils/date";
  * including income, total and categorized expenses, budget progress, and historical trends.
  */
 export async function getDashboardSummary(userId: string, month: string) {
-  const [income, monthExpenses, allIncome, allPaidExpensesAgg, budgets, categories] =
+  const [monthIncomes, monthExpenses, allIncomeAgg, allPaidExpensesAgg, budgets, categories] =
     await Promise.all([
-      prisma.income.findUnique({ where: { userId_month: { userId, month } } }),
+      prisma.income.findMany({ where: { userId, month } }),
       prisma.expense.findMany({ where: { userId, month }, include: { category: true } }),
-      prisma.income.aggregate({ where: { userId }, _sum: { salary: true, bonus: true, otherIncome: true } }),
+      prisma.income.aggregate({ where: { userId }, _sum: { amount: true } }),
       prisma.expense.aggregate({ where: { userId, status: "Paid" }, _sum: { amount: true } }),
       prisma.budget.findMany({ where: { userId }, include: { category: true } }),
       prisma.category.findMany({ where: { userId } }),
     ]);
 
-  const monthlyIncome = (income?.salary ?? 0) + (income?.bonus ?? 0) + (income?.otherIncome ?? 0);
+  const receivedIncome = sum(
+    monthIncomes.filter((i) => i.status === "Received"),
+    (i) => i.amount
+  );
+  const expectedIncome = sum(
+    monthIncomes.filter((i) => i.status === "Expected"),
+    (i) => i.amount
+  );
+  const monthlyIncome = receivedIncome + expectedIncome;
 
   const totalExpenses = sum(monthExpenses, (e) => e.amount);
   const paidExpenses = sum(
@@ -25,10 +33,10 @@ export async function getDashboardSummary(userId: string, month: string) {
   );
   const unpaidExpenses = totalExpenses - paidExpenses;
 
-  // True net balance for the month (Monthly Income - Total Expenses)
+  // Real-time liquidity in hand (Received Income - Paid Expenses)
+  const cashInHand = receivedIncome - paidExpenses;
+  // True projected net balance for the month (Total Income - Total Expenses)
   const remainingBalance = monthlyIncome - totalExpenses;
-  // Actual liquidity in hand (Monthly Income - Paid Expenses)
-  const cashInHand = monthlyIncome - paidExpenses;
 
   // Calculate calendar days and remaining days for daily allowance
   const [yearStr, monthStr] = month.split("-");
@@ -85,8 +93,7 @@ export async function getDashboardSummary(userId: string, month: string) {
     pacingStatus = "On Track";
   }
 
-  const allTimeIncome =
-    (allIncome._sum.salary ?? 0) + (allIncome._sum.bonus ?? 0) + (allIncome._sum.otherIncome ?? 0);
+  const allTimeIncome = allIncomeAgg._sum.amount ?? 0;
   const allTimePaidExpenses = allPaidExpensesAgg._sum.amount ?? 0;
   const savingsAllTime = allTimeIncome - allTimePaidExpenses;
   const savingsPercentage = monthlyIncome > 0 ? Math.max(0, remainingBalance / monthlyIncome) : 0;
@@ -131,6 +138,8 @@ export async function getDashboardSummary(userId: string, month: string) {
   return {
     month,
     monthlyIncome,
+    receivedIncome,
+    expectedIncome,
     totalExpenses,
     paidExpenses,
     unpaidExpenses,

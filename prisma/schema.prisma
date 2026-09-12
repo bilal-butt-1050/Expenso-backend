@@ -70,19 +70,25 @@ model Expense {
   @@map("expenses")
 }
 
-// Stores user income records for a given month.
+// Stores itemized user income records (salary, freelance, investments, etc.)
 model Income {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  month       String // "YYYY-MM"
-  salary      Float    @default(0)
-  bonus       Float    @default(0)
-  otherIncome Float    @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date          DateTime
+  month         String // "YYYY-MM"
+  source        String // e.g. "Salary", "Freelance", "Business", "Investment", "Bonus", "Rental", "Other"
+  sourceIcon    String   @default("cash-multiple")
+  sourceColor   String   @default("#00E676")
+  description   String?
+  amount        Float
+  status        String   @default("Received") // "Received" | "Expected"
+  paymentMethod String   @default("Bank Transfer")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  @@unique([userId, month])
+  @@index([userId, month])
+  @@index([userId, status])
   @@map("incomes")
 }
 
