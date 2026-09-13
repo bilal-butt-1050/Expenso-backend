@@ -101,10 +101,11 @@ model Budget {
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   amount     Float
+  month      String   // "YYYY-MM"
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  @@unique([userId, categoryId])
+  @@unique([userId, categoryId, month])
   @@map("budgets")
 }
 

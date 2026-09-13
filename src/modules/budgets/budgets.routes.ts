@@ -10,12 +10,15 @@ budgetsRouter.use(requireAuth);
 const budgetSchema = z.object({
   categoryId: z.string().uuid(),
   amount: z.number().min(0),
+  month: z.string().regex(/^\d{4}-\d{2}$/, "Invalid month format"),
 });
 
 budgetsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
-    res.json(await listBudgets(req.userId!));
+    const month = req.query.month as string | undefined;
+    if (!month) throw new Error("Month is required");
+    res.json(await listBudgets(req.userId!, month));
   })
 );
 
@@ -23,14 +26,16 @@ budgetsRouter.put(
   "/",
   asyncHandler(async (req, res) => {
     const body = budgetSchema.parse(req.body);
-    res.json(await upsertBudget(req.userId!, body.categoryId, body.amount));
+    res.json(await upsertBudget(req.userId!, body.categoryId, body.amount, body.month));
   })
 );
 
 budgetsRouter.delete(
   "/:categoryId",
   asyncHandler(async (req, res) => {
-    await deleteBudget(req.userId!, req.params.categoryId);
+    const month = req.query.month as string | undefined;
+    if (!month) throw new Error("Month is required");
+    await deleteBudget(req.userId!, req.params.categoryId, month);
     res.status(204).send();
   })
 );

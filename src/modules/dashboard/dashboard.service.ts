@@ -7,7 +7,7 @@ import { trailingMonths } from "../../utils/date";
  */
 export async function getDashboardSummary(userId: string, month: string) {
   const prevMonth = getPreviousMonth(month);
-  const [user, monthIncomes, monthExpenses, prevMonthExpenses, allIncomeAgg, allPaidExpensesAgg, expectedAgg, unpaidAgg, budgets, categories] =
+  const [user, monthIncomes, monthExpenses, prevMonthExpenses, allIncomeAgg, allPaidExpensesAgg, expectedAgg, unpaidAgg, budgets, prevMonthBudgets, categories] =
     await Promise.all([
       prisma.user.findUnique({ where: { id: userId } }),
       prisma.income.findMany({ where: { userId, month } }),
@@ -17,7 +17,8 @@ export async function getDashboardSummary(userId: string, month: string) {
       prisma.expense.aggregate({ where: { userId, status: "Paid", month: { lte: month } }, _sum: { amount: true } }),
       prisma.income.aggregate({ where: { userId, status: "Expected", month: { lte: month } }, _sum: { amount: true } }),
       prisma.expense.aggregate({ where: { userId, status: "Unpaid", month: { lte: month } }, _sum: { amount: true } }),
-      prisma.budget.findMany({ where: { userId }, include: { category: true } }),
+      prisma.budget.findMany({ where: { userId, month }, include: { category: true } }),
+      prisma.budget.findMany({ where: { userId, month: prevMonth } }),
       prisma.category.findMany({ where: { userId } }),
     ]);
 
@@ -143,7 +144,7 @@ export async function getDashboardSummary(userId: string, month: string) {
   });
 
   // Calculate rollover savings from previous month
-  const rolloverSavings = budgets.reduce((total, b) => {
+  const rolloverSavings = prevMonthBudgets.reduce((total, b) => {
     const prevActual = sum(
       prevMonthExpenses.filter((e) => e.categoryId === b.categoryId),
       (e) => e.amount
