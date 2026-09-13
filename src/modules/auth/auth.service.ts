@@ -7,6 +7,7 @@ import { AppError } from "../../utils/asyncHandler";
 // these can be renamed, recolored, or deleted afterwards, and the user can
 // add as many of their own on top.
 const DEFAULT_CATEGORIES = [
+  { name: "Housing", icon: "home", color: "#00B0FF" },
   { name: "Commute", icon: "bus", color: "#00E676" },
   { name: "Food", icon: "food", color: "#FFB300" },
   { name: "Shopping", icon: "shopping", color: "#7C4DFF" },
@@ -16,6 +17,10 @@ const DEFAULT_CATEGORIES = [
   { name: "Education", icon: "school", color: "#69F0AE" },
   { name: "Family", icon: "account-group", color: "#FFD740" },
   { name: "Subscriptions", icon: "refresh", color: "#B388FF" },
+  { name: "Personal Care", icon: "face-man-shimmer", color: "#F50057" },
+  { name: "Travel", icon: "airplane", color: "#00E5FF" },
+  { name: "Gifts", icon: "gift", color: "#E040FB" },
+  { name: "Savings", icon: "piggy-bank-outline", color: "#2979FF" },
   { name: "Other", icon: "shape-outline", color: "#9E9E9E" },
 ];
 

@@ -12,6 +12,11 @@ export async function createCategory(
   userId: string,
   data: { name: string; icon?: string; color?: string }
 ) {
+  const count = await prisma.category.count({ where: { userId } });
+  if (count >= 20) {
+    throw new AppError(400, "Maximum of 20 categories allowed");
+  }
+
   return prisma.category.create({
     data: { userId, name: data.name, icon: data.icon, color: data.color, isDefault: false },
   });
@@ -22,7 +27,12 @@ export async function updateCategory(
   categoryId: string,
   data: { name?: string; icon?: string; color?: string }
 ) {
-  await assertOwnership(userId, categoryId);
+  const category = await assertOwnership(userId, categoryId);
+
+  if (category.name === "Other" || category.name === "Savings") {
+    throw new AppError(400, `The "${category.name}" category cannot be modified`);
+  }
+
   return prisma.category.update({ where: { id: categoryId }, data });
 }
 
@@ -30,7 +40,16 @@ export async function updateCategory(
 // bucket (creating one if it somehow doesn't exist) instead of orphaning
 // or cascading, so past spending history is never silently lost.
 export async function deleteCategory(userId: string, categoryId: string) {
-  await assertOwnership(userId, categoryId);
+  const category = await assertOwnership(userId, categoryId);
+
+  if (category.name === "Other" || category.name === "Savings") {
+    throw new AppError(400, `The "${category.name}" category cannot be deleted`);
+  }
+
+  const count = await prisma.category.count({ where: { userId } });
+  if (count <= 5) {
+    throw new AppError(400, "Minimum of 5 categories required");
+  }
 
   const fallback = await getOrCreateOtherCategory(userId, categoryId);
 
