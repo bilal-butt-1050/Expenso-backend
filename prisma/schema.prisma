@@ -15,7 +15,8 @@ datasource db {
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
-  passwordHash String
+  passwordHash String?
+  googleId     String?  @unique
   name         String?
   currency     String   @default("PKR")
   savingsGoal  Float    @default(0) // monthly savings target, editable in Settings
@@ -105,4 +106,14 @@ model Budget {
 
   @@unique([userId, categoryId])
   @@map("budgets")
+}
+
+model OtpVerification {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  otp       String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("otp_verifications")
 }

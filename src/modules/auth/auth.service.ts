@@ -2,6 +2,8 @@ import { prisma } from "../../lib/prisma";
 import { hashPassword, comparePassword } from "../../utils/password";
 import { signToken } from "../../utils/jwt";
 import { AppError } from "../../utils/asyncHandler";
+import { sendOtpEmail } from "./email.service";
+import { OAuth2Client } from "google-auth-library";
 
 // Seeded once per new user so the app is immediately usable — every one of
 // these can be renamed, recolored, or deleted afterwards, and the user can
@@ -24,10 +26,38 @@ const DEFAULT_CATEGORIES = [
   { name: "Other", icon: "shape-outline", color: "#9E9E9E" },
 ];
 
-export async function registerUser(email: string, password: string, name?: string) {
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID_WEB || "dummy-client-id");
+
+export async function generateAndSendOtp(email: string) {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     throw new AppError(409, "An account with that email already exists");
+  }
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  await prisma.otpVerification.upsert({
+    where: { email },
+    create: { email, otp, expiresAt },
+    update: { otp, expiresAt },
+  });
+
+  await sendOtpEmail(email, otp);
+}
+
+export async function registerUser(email: string, password: string, otp: string, name?: string) {
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    throw new AppError(409, "An account with that email already exists");
+  }
+
+  const verification = await prisma.otpVerification.findUnique({ where: { email } });
+  if (!verification || verification.otp !== otp) {
+    throw new AppError(400, "Invalid verification code");
+  }
+  if (verification.expiresAt < new Date()) {
+    throw new AppError(400, "Verification code has expired");
   }
 
   const passwordHash = await hashPassword(password);
@@ -40,6 +70,8 @@ export async function registerUser(email: string, password: string, name?: strin
     },
   });
 
+  await prisma.otpVerification.delete({ where: { email } });
+
   const token = signToken({ userId: user.id });
   return { token, user: toPublicUser(user) };
 }
@@ -50,9 +82,54 @@ export async function loginUser(email: string, password: string) {
     throw new AppError(401, "Invalid email or password");
   }
 
+  if (!user.passwordHash) {
+    throw new AppError(401, "Please sign in with Google");
+  }
+
   const valid = await comparePassword(password, user.passwordHash);
   if (!valid) {
     throw new AppError(401, "Invalid email or password");
+  }
+
+  const token = signToken({ userId: user.id });
+  return { token, user: toPublicUser(user) };
+}
+
+export async function loginWithGoogle(idToken: string) {
+  const ticket = await googleClient.verifyIdToken({
+    idToken,
+    audience: [
+      process.env.GOOGLE_CLIENT_ID_WEB || "",
+      process.env.GOOGLE_CLIENT_ID_IOS || "",
+      process.env.GOOGLE_CLIENT_ID_ANDROID || "",
+    ].filter(Boolean),
+  });
+
+  const payload = ticket.getPayload();
+  if (!payload || !payload.email) {
+    throw new AppError(400, "Invalid Google token");
+  }
+
+  const { email, sub: googleId, name } = payload;
+
+  let user = await prisma.user.findUnique({ where: { email } });
+
+  if (!user) {
+    // Register
+    user = await prisma.user.create({
+      data: {
+        email,
+        googleId,
+        name,
+        categories: { create: DEFAULT_CATEGORIES.map((c) => ({ ...c, isDefault: true })) },
+      },
+    });
+  } else if (!user.googleId) {
+    // Link existing email/password account to Google
+    user = await prisma.user.update({
+      where: { email },
+      data: { googleId },
+    });
   }
 
   const token = signToken({ userId: user.id });
