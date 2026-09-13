@@ -7,7 +7,7 @@ import { trailingMonths } from "../../utils/date";
  */
 export async function getDashboardSummary(userId: string, month: string) {
   const prevMonth = getPreviousMonth(month);
-  const [user, monthIncomes, monthExpenses, prevMonthExpenses, allIncomeAgg, allPaidExpensesAgg, expectedAgg, unpaidAgg, budgets, prevMonthBudgets, categories] =
+  const [user, monthIncomes, monthExpenses, prevMonthExpenses, allIncomeAgg, allPaidExpensesAgg, unpaidAgg, budgets, prevMonthBudgets, categories] =
     await Promise.all([
       prisma.user.findUnique({ where: { id: userId } }),
       prisma.income.findMany({ where: { userId, month } }),
@@ -15,27 +15,13 @@ export async function getDashboardSummary(userId: string, month: string) {
       prisma.expense.findMany({ where: { userId, month: prevMonth } }),
       prisma.income.aggregate({ where: { userId, month: { lte: month } }, _sum: { amount: true } }),
       prisma.expense.aggregate({ where: { userId, status: "Paid", month: { lte: month } }, _sum: { amount: true } }),
-      prisma.income.aggregate({ where: { userId, status: "Expected", month: { lte: month } }, _sum: { amount: true } }),
       prisma.expense.aggregate({ where: { userId, status: "Unpaid", month: { lte: month } }, _sum: { amount: true } }),
       prisma.budget.findMany({ where: { userId, month }, include: { category: true } }),
       prisma.budget.findMany({ where: { userId, month: prevMonth } }),
       prisma.category.findMany({ where: { userId } }),
     ]);
 
-  const receivedIncome = sum(
-    monthIncomes.filter((i) => i.status === "Received"),
-    (i) => i.amount
-  );
-  // Action Center: these are global up to the current month (not strictly this month)
-  const expectedIncome = expectedAgg._sum.amount ?? 0;
-  const unpaidExpenses = unpaidAgg._sum.amount ?? 0;
-
-  // Monthly values strictly for YYYY-MM
-  const monthExpectedIncome = sum(
-    monthIncomes.filter((i) => i.status === "Expected"),
-    (i) => i.amount
-  );
-  const monthlyIncome = receivedIncome + monthExpectedIncome;
+  const monthlyIncome = sum(monthIncomes, (i) => i.amount);
 
   const totalExpenses = sum(monthExpenses, (e) => e.amount);
   const paidExpenses = sum(
@@ -43,8 +29,8 @@ export async function getDashboardSummary(userId: string, month: string) {
     (e) => e.amount
   );
 
-  // Real-time liquidity in hand (Received Income - Paid Expenses)
-  const cashInHand = receivedIncome - paidExpenses;
+  // Real-time liquidity in hand (Total Income - Paid Expenses)
+  const cashInHand = monthlyIncome - paidExpenses;
   // True projected net balance for the month (Total Income - Total Expenses)
   const remainingBalance = monthlyIncome - totalExpenses;
 
@@ -159,8 +145,6 @@ export async function getDashboardSummary(userId: string, month: string) {
     savingsGoal: user?.savingsGoal ?? 0,
     rolloverSavings,
     monthlyIncome,
-    receivedIncome,
-    expectedIncome,
     totalExpenses,
     paidExpenses,
     unpaidExpenses,

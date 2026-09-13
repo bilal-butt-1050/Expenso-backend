@@ -6,7 +6,6 @@ import {
   listIncome,
   createIncome,
   updateIncome,
-  toggleIncomeStatus,
   deleteIncome,
   getIncomeSummary,
 } from "./income.service";
@@ -22,7 +21,6 @@ const incomeSchema = z.object({
   sourceColor: z.string().max(20).optional(),
   description: z.string().max(200).optional(),
   amount: z.number().positive(),
-  status: z.enum(["Received", "Expected"]).optional(),
   paymentMethod: z.string().max(50).optional(),
 });
 
@@ -30,7 +28,6 @@ const updateIncomeSchema = incomeSchema.partial();
 
 const querySchema = z.object({
   month: z.string().optional(),
-  status: z.enum(["Received", "Expected"]).optional(),
   skip: z.coerce.number().min(0).optional(),
   take: z.coerce.number().min(1).max(100).optional(),
 });
@@ -71,19 +68,6 @@ incomeRouter.put(
   })
 );
 
-incomeRouter.patch(
-  "/:id/status",
-  asyncHandler(async (req, res) => {
-    res.json(await toggleIncomeStatus(req.userId!, req.params.id));
-  })
-);
-
-incomeRouter.patch(
-  "/:id/toggle-status",
-  asyncHandler(async (req, res) => {
-    res.json(await toggleIncomeStatus(req.userId!, req.params.id));
-  })
-);
 
 incomeRouter.delete(
   "/:id",

@@ -9,13 +9,12 @@ export interface IncomeInput {
   sourceColor?: string;
   description?: string;
   amount: number;
-  status?: "Received" | "Expected";
   paymentMethod?: string;
 }
 
 export async function listIncome(
   userId: string,
-  filters?: { month?: string; status?: string; skip?: number; take?: number }
+  filters?: { month?: string; skip?: number; take?: number }
 ) {
   const take = filters?.take || 50;
   const skip = filters?.skip || 0;
@@ -24,7 +23,6 @@ export async function listIncome(
     where: {
       userId,
       month: filters?.month,
-      status: filters?.status,
     },
     orderBy: { date: "desc" },
     skip,
@@ -48,7 +46,6 @@ export async function createIncome(userId: string, input: IncomeInput) {
       sourceColor: input.sourceColor || "#00E676",
       description: input.description,
       amount: input.amount,
-      status: input.status || "Received",
       paymentMethod: input.paymentMethod || "Bank",
     },
   });
@@ -69,14 +66,6 @@ export async function updateIncome(
   });
 }
 
-export async function toggleIncomeStatus(userId: string, id: string) {
-  const income = await assertIncomeOwnership(userId, id);
-  const nextStatus = income.status === "Received" ? "Expected" : "Received";
-  return prisma.income.update({
-    where: { id },
-    data: { status: nextStatus },
-  });
-}
 
 export async function deleteIncome(userId: string, id: string) {
   await assertIncomeOwnership(userId, id);
@@ -88,21 +77,11 @@ export async function getIncomeSummary(userId: string, month: string) {
     where: { userId, month },
   });
 
-  const receivedIncome = incomes
-    .filter((i) => i.status === "Received")
-    .reduce((sum, i) => sum + i.amount, 0);
-
-  const expectedIncome = incomes
-    .filter((i) => i.status === "Expected")
-    .reduce((sum, i) => sum + i.amount, 0);
-
-  const totalIncome = receivedIncome + expectedIncome;
+  const totalIncome = incomes.reduce((sum, i) => sum + i.amount, 0);
 
   return {
     month,
     totalIncome,
-    receivedIncome,
-    expectedIncome,
   };
 }
 

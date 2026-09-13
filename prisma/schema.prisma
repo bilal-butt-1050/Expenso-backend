@@ -83,13 +83,11 @@ model Income {
   sourceColor   String   @default("#00E676")
   description   String?
   amount        Float
-  status        String   @default("Received") // "Received" | "Expected"
   paymentMethod String   @default("Bank Transfer")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@index([userId, month])
-  @@index([userId, status])
   @@map("incomes")
 }
 
