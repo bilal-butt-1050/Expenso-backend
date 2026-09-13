@@ -12,11 +12,14 @@ export interface ExpenseInput {
   status?: "Paid" | "Unpaid";
 }
 
-export function listExpenses(
+export async function listExpenses(
   userId: string,
-  filters: { month?: string; categoryId?: string; status?: string }
+  filters: { month?: string; categoryId?: string; status?: string; skip?: number; take?: number }
 ) {
-  return prisma.expense.findMany({
+  const take = filters.take || 50;
+  const skip = filters.skip || 0;
+
+  const data = await prisma.expense.findMany({
     where: {
       userId,
       month: filters.month,
@@ -25,7 +28,14 @@ export function listExpenses(
     },
     include: { category: true },
     orderBy: { date: "desc" },
+    skip,
+    take: take + 1, // Fetch one extra to determine hasMore
   });
+
+  const hasMore = data.length > take;
+  const items = hasMore ? data.slice(0, take) : data;
+
+  return { items, hasMore };
 }
 
 export async function createExpense(userId: string, input: ExpenseInput) {

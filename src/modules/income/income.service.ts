@@ -13,18 +13,28 @@ export interface IncomeInput {
   paymentMethod?: string;
 }
 
-export function listIncome(
+export async function listIncome(
   userId: string,
-  filters?: { month?: string; status?: string }
+  filters?: { month?: string; status?: string; skip?: number; take?: number }
 ) {
-  return prisma.income.findMany({
+  const take = filters?.take || 50;
+  const skip = filters?.skip || 0;
+
+  const data = await prisma.income.findMany({
     where: {
       userId,
       month: filters?.month,
       status: filters?.status,
     },
     orderBy: { date: "desc" },
+    skip,
+    take: take + 1,
   });
+
+  const hasMore = data.length > take;
+  const items = hasMore ? data.slice(0, take) : data;
+
+  return { items, hasMore };
 }
 
 export async function createIncome(userId: string, input: IncomeInput) {

@@ -29,6 +29,8 @@ const querySchema = z.object({
   month: z.string().optional(),
   categoryId: z.string().uuid().optional(),
   status: z.enum(["Paid", "Unpaid"]).optional(),
+  skip: z.coerce.number().min(0).optional(),
+  take: z.coerce.number().min(1).max(100).optional(),
 });
 
 expensesRouter.get(
