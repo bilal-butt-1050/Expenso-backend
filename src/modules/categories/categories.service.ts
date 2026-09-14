@@ -1,10 +1,16 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 
-export function listCategories(userId: string) {
-  return prisma.category.findMany({
+export async function listCategories(userId: string) {
+  const categories = await prisma.category.findMany({
     where: { userId },
     orderBy: [{ name: "asc" }],
+  });
+
+  return categories.sort((a, b) => {
+    if (a.name === "Other") return 1;
+    if (b.name === "Other") return -1;
+    return 0; // maintain existing alphabetical order for everything else
   });
 }
 
