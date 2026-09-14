@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
-import { registerUser, loginUser, getUserById, updateUserProfile, generateAndSendOtp, loginWithGoogle } from "./auth.service";
+import { registerUser, loginUser, getUserById, updateUserProfile, generateAndSendOtp, loginWithGoogle, changePassword } from "./auth.service";
 
 export const authRouter = Router();
 
@@ -29,6 +29,11 @@ const googleSchema = z.object({
 const updateProfileSchema = z.object({
   name: z.string().min(1).optional(),
   currency: z.string().min(1).optional(),
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().optional(),
+  newPassword: z.string().min(8, "New password must be at least 8 characters"),
 });
 
 authRouter.post(
@@ -83,5 +88,15 @@ authRouter.patch(
     const body = updateProfileSchema.parse(req.body);
     const user = await updateUserProfile(req.userId!, body);
     res.json(user);
+  })
+);
+
+authRouter.patch(
+  "/password",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const body = changePasswordSchema.parse(req.body);
+    await changePassword(req.userId!, body.currentPassword, body.newPassword);
+    res.json({ message: "Password updated successfully" });
   })
 );

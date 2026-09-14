@@ -154,6 +154,34 @@ export async function updateUserProfile(
   return toPublicUser(user);
 }
 
+export async function changePassword(userId: string, currentPassword?: string, newPassword?: string) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    throw new AppError(404, "User not found");
+  }
+
+  // If user signed up with Google, they might not have a password hash
+  if (user.passwordHash) {
+    if (!currentPassword) {
+      throw new AppError(400, "Current password is required");
+    }
+    const isValid = await comparePassword(currentPassword, user.passwordHash);
+    if (!isValid) {
+      throw new AppError(400, "Incorrect current password");
+    }
+  }
+
+  if (!newPassword || newPassword.length < 8) {
+    throw new AppError(400, "New password must be at least 8 characters");
+  }
+
+  const newHash = await hashPassword(newPassword);
+  await prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash: newHash },
+  });
+}
+
 // Never leak the password hash back to a client.
 function toPublicUser(user: {
   id: string;
