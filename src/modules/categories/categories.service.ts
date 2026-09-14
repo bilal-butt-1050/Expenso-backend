@@ -4,7 +4,7 @@ import { AppError } from "../../utils/asyncHandler";
 export function listCategories(userId: string) {
   return prisma.category.findMany({
     where: { userId },
-    orderBy: [{ isDefault: "desc" }, { name: "asc" }],
+    orderBy: [{ name: "asc" }],
   });
 }
 
