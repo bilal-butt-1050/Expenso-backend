@@ -45,7 +45,7 @@ export async function generateAndSendOtp(email: string) {
   await sendOtpEmail(email, otp);
 }
 
-export async function registerUser(email: string, password: string, otp: string, name?: string) {
+export async function registerUser(email: string, password: string, otp: string, name: string) {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     throw new AppError(409, "An account with that email already exists");

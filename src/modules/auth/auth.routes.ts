@@ -14,7 +14,7 @@ const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8, "Password must be at least 8 characters"),
   otp: z.string().length(6, "OTP must be exactly 6 digits"),
-  name: z.string().min(1).optional(),
+  name: z.string().min(1, "Name is required"),
 });
 
 const loginSchema = z.object({
