@@ -22,6 +22,7 @@ export async function getDashboardSummary(userId: string, month: string) {
     ]);
 
   const monthlyIncome = sum(monthIncomes, (i) => i.amount);
+  const unpaidExpenses = unpaidAgg._sum.amount ?? 0;
 
   const totalExpenses = sum(monthExpenses, (e) => e.amount);
   const paidExpenses = sum(
