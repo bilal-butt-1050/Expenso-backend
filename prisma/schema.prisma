@@ -19,7 +19,6 @@ model User {
   googleId     String?  @unique
   name         String?
   currency     String   @default("PKR")
-  savingsGoal  Float    @default(0) // monthly savings target, editable in Settings
   createdAt    DateTime @default(now())
 
   categories Category[]

@@ -22,7 +22,6 @@ const DEFAULT_CATEGORIES = [
   { name: "Personal Care", icon: "face-man-shimmer", color: "#F50057" },
   { name: "Travel", icon: "airplane", color: "#00E5FF" },
   { name: "Gifts", icon: "gift", color: "#E040FB" },
-  { name: "Savings", icon: "piggy-bank-outline", color: "#2979FF" },
   { name: "Other", icon: "shape-outline", color: "#9E9E9E" },
 ];
 
@@ -146,7 +145,7 @@ export async function getUserById(userId: string) {
 
 export async function updateUserProfile(
   userId: string,
-  data: { name?: string; savingsGoal?: number; currency?: string }
+  data: { name?: string; currency?: string }
 ) {
   const user = await prisma.user.update({
     where: { id: userId },
@@ -161,13 +160,11 @@ function toPublicUser(user: {
   email: string;
   name: string | null;
   currency: string;
-  savingsGoal: number;
 }) {
   return {
     id: user.id,
     email: user.email,
     name: user.name,
     currency: user.currency,
-    savingsGoal: user.savingsGoal,
   };
 }

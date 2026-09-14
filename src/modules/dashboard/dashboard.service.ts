@@ -7,7 +7,7 @@ import { trailingMonths } from "../../utils/date";
  */
 export async function getDashboardSummary(userId: string, month: string) {
   const prevMonth = getPreviousMonth(month);
-  const [user, monthIncomes, monthExpenses, prevMonthExpenses, allIncomeAgg, allPaidExpensesAgg, unpaidAgg, budgets, prevMonthBudgets, categories] =
+  const [_user, monthIncomes, monthExpenses, prevMonthExpenses, allIncomeAgg, allPaidExpensesAgg, unpaidAgg, budgets, prevMonthBudgets, categories] =
     await Promise.all([
       prisma.user.findUnique({ where: { id: userId } }),
       prisma.income.findMany({ where: { userId, month } }),
@@ -93,7 +93,10 @@ export async function getDashboardSummary(userId: string, month: string) {
   const allTimeIncome = allIncomeAgg._sum.amount ?? 0;
   const allTimePaidExpenses = allPaidExpensesAgg._sum.amount ?? 0;
   const savingsAllTime = allTimeIncome - allTimePaidExpenses;
-  const savingsPercentage = monthlyIncome > 0 ? Math.max(0, remainingBalance / monthlyIncome) : 0;
+
+  const totalBudgeted = sum(budgets, (b) => b.amount);
+  const plannedSavings = Math.max(0, monthlyIncome - totalBudgeted);
+  const savingsPercentage = plannedSavings > 0 ? Math.max(0, Math.min(1, cashInHand / plannedSavings)) : 0;
 
   const categoryBreakdown = categories
     .map((c) => ({
@@ -143,7 +146,7 @@ export async function getDashboardSummary(userId: string, month: string) {
 
   return {
     month,
-    savingsGoal: user?.savingsGoal ?? 0,
+    plannedSavings,
     rolloverSavings,
     monthlyIncome,
     totalExpenses,

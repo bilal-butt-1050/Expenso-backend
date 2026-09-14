@@ -28,7 +28,6 @@ const googleSchema = z.object({
 
 const updateProfileSchema = z.object({
   name: z.string().min(1).optional(),
-  savingsGoal: z.number().min(0).max(100).optional(),
   currency: z.string().min(1).optional(),
 });
 
