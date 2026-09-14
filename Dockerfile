@@ -1,5 +1,6 @@
 # --- deps & build ---
-FROM node:20-alpine AS build
+FROM node:20-slim AS build
+RUN apt-get update -y && apt-get install -y openssl
 WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma
@@ -9,7 +10,8 @@ RUN npx prisma generate
 RUN npm run build
 
 # --- runtime ---
-FROM node:20-alpine AS runtime
+FROM node:20-slim AS runtime
+RUN apt-get update -y && apt-get install -y openssl
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
