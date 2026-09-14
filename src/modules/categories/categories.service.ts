@@ -35,7 +35,7 @@ export async function updateCategory(
 ) {
   const category = await assertOwnership(userId, categoryId);
 
-  if (category.name === "Other" || category.name === "Savings") {
+  if (category.name === "Other") {
     throw new AppError(400, `The "${category.name}" category cannot be modified`);
   }
 
@@ -48,7 +48,7 @@ export async function updateCategory(
 export async function deleteCategory(userId: string, categoryId: string) {
   const category = await assertOwnership(userId, categoryId);
 
-  if (category.name === "Other" || category.name === "Savings") {
+  if (category.name === "Other") {
     throw new AppError(400, `The "${category.name}" category cannot be deleted`);
   }
 
