@@ -1,13 +1,38 @@
 version: "3.9"
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: expenso-db
+    restart: always
+    environment:
+      POSTGRES_USER: expenso
+      POSTGRES_PASSWORD: expenso_secure_password_here
+      POSTGRES_DB: expenso
+    ports:
+      # Bound to loopback so it is never exposed to the public internet
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - expenso_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U expenso"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   api:
     build: .
     container_name: expenso-backend
     restart: always
+    depends_on:
+      db:
+        condition: service_healthy
     env_file:
       - .env
     ports:
       - "127.0.0.1:4000:4000"
     security_opt:
       - no-new-privileges:true
+
+volumes:
+  expenso_db_data:
