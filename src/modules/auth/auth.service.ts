@@ -82,7 +82,7 @@ export async function loginUser(email: string, password: string) {
   }
 
   if (!user.passwordHash) {
-    throw new AppError(401, "Please sign in with Google");
+    throw new AppError(401, "Invalid email or password");
   }
 
   const valid = await comparePassword(password, user.passwordHash);
