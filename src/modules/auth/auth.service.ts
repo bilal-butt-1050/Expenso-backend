@@ -109,7 +109,7 @@ export async function loginWithGoogle(idToken: string) {
     throw new AppError(400, "Invalid Google token");
   }
 
-  const { email, sub: googleId, name } = payload;
+  const { email, sub: googleId, name, picture } = payload;
 
   let user = await prisma.user.findUnique({ where: { email } });
 
@@ -120,14 +120,18 @@ export async function loginWithGoogle(idToken: string) {
         email,
         googleId,
         name,
+        avatarUrl: picture,
         categories: { create: DEFAULT_CATEGORIES.map((c) => ({ ...c, isDefault: true })) },
       },
     });
-  } else if (!user.googleId) {
-    // Link existing email/password account to Google
+  } else {
+    // Update googleId and avatarUrl if provided
     user = await prisma.user.update({
       where: { email },
-      data: { googleId },
+      data: {
+        googleId: user.googleId || googleId,
+        avatarUrl: picture || user.avatarUrl,
+      },
     });
   }
 
@@ -145,7 +149,7 @@ export async function getUserById(userId: string) {
 
 export async function updateUserProfile(
   userId: string,
-  data: { name?: string; currency?: string }
+  data: { name?: string; currency?: string; avatarUrl?: string | null }
 ) {
   const user = await prisma.user.update({
     where: { id: userId },
@@ -188,11 +192,13 @@ function toPublicUser(user: {
   email: string;
   name: string | null;
   currency: string;
+  avatarUrl?: string | null;
 }) {
   return {
     id: user.id,
     email: user.email,
     name: user.name,
     currency: user.currency,
+    avatarUrl: user.avatarUrl ?? null,
   };
 }

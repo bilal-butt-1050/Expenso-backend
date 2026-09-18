@@ -19,6 +19,7 @@ model User {
   passwordHash String?
   googleId     String?  @unique
   name         String?
+  avatarUrl    String?
   currency     String   @default("PKR")
   createdAt    DateTime @default(now())
 

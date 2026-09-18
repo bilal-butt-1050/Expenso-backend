@@ -29,6 +29,7 @@ const googleSchema = z.object({
 const updateProfileSchema = z.object({
   name: z.string().min(1).optional(),
   currency: z.string().min(1).optional(),
+  avatarUrl: z.string().url().nullable().optional(),
 });
 
 const changePasswordSchema = z.object({
