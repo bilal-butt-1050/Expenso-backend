@@ -1,11 +1,19 @@
 // All months are keyed as "YYYY-MM" strings — easy to index, sort, and
 // compare without timezone surprises.
 
-export function toMonthKey(date: Date): string {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+export function toMonthKey(date: Date | string): string {
+  if (typeof date === "string") {
+    const match = date.match(/^(\d{4})-(\d{2})/);
+    if (match) {
+      return `${match[1]}-${match[2]}`;
+    }
+  }
+  const d = typeof date === "string" ? new Date(date) : date;
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   return `${y}-${m}`;
 }
+
 
 export function isValidMonthKey(value: string): boolean {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(value);

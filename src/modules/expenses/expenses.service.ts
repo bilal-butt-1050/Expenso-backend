@@ -1,7 +1,7 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 import { toMonthKey } from "../../utils/date";
-import { cache } from "../../lib/cache";
+import { invalidateUserDashboard } from "../../lib/cache";
 
 export interface ExpenseInput {
   categoryId: string;
@@ -55,13 +55,14 @@ export async function createExpense(userId: string, input: ExpenseInput) {
     },
     include: { category: true },
   });
-  cache.del(`dashboard_${userId}_${result.month}`);
+  invalidateUserDashboard(userId);
   return result;
 }
 
 export async function updateExpense(userId: string, id: string, input: Partial<ExpenseInput>) {
-  const expense = await assertExpenseOwnership(userId, id);
+  await assertExpenseOwnership(userId, id);
   if (input.categoryId) {
+
     await assertCategoryOwnership(userId, input.categoryId);
   }
 
@@ -74,17 +75,14 @@ export async function updateExpense(userId: string, id: string, input: Partial<E
     include: { category: true },
   });
   
-  cache.del(`dashboard_${userId}_${expense.month}`);
-  if (result.month !== expense.month) {
-    cache.del(`dashboard_${userId}_${result.month}`);
-  }
+  invalidateUserDashboard(userId);
   return result;
 }
 
 export async function deleteExpense(userId: string, id: string) {
-  const expense = await assertExpenseOwnership(userId, id);
+  await assertExpenseOwnership(userId, id);
   await prisma.expense.delete({ where: { id } });
-  cache.del(`dashboard_${userId}_${expense.month}`);
+  invalidateUserDashboard(userId);
 }
 
 // A quick one-tap toggle for the most common action on this screen: marking
@@ -96,9 +94,10 @@ export async function toggleExpenseStatus(userId: string, id: string) {
     data: { status: expense.status === "Paid" ? "Unpaid" : "Paid" },
     include: { category: true },
   });
-  cache.del(`dashboard_${userId}_${expense.month}`);
+  invalidateUserDashboard(userId);
   return result;
 }
+
 
 async function assertExpenseOwnership(userId: string, id: string) {
   const expense = await prisma.expense.findFirst({ where: { id, userId } });

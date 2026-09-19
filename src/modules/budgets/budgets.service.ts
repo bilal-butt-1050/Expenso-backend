@@ -1,6 +1,6 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
-import { cache } from "../../lib/cache";
+import { invalidateUserDashboard } from "../../lib/cache";
 
 export function listBudgets(userId: string, month: string) {
   return prisma.budget.findMany({ where: { userId, month }, include: { category: true } });
@@ -18,11 +18,12 @@ export async function upsertBudget(userId: string, categoryId: string, amount: n
     update: { amount },
     include: { category: true },
   });
-  cache.del(`dashboard_${userId}_${month}`);
+  invalidateUserDashboard(userId);
   return result;
 }
 
 export async function deleteBudget(userId: string, categoryId: string, month: string) {
   await prisma.budget.deleteMany({ where: { userId, categoryId, month } });
-  cache.del(`dashboard_${userId}_${month}`);
+  invalidateUserDashboard(userId);
 }
+

@@ -1,7 +1,7 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 import { toMonthKey } from "../../utils/date";
-import { cache } from "../../lib/cache";
+import { invalidateUserDashboard } from "../../lib/cache";
 
 export interface IncomeInput {
   date: Date;
@@ -44,13 +44,13 @@ export async function createIncome(userId: string, input: IncomeInput) {
       month: toMonthKey(input.date),
       source: input.source,
       sourceIcon: input.sourceIcon || "cash-multiple",
-      sourceColor: input.sourceColor || "#00E676",
+      sourceColor: input.sourceColor || "#10B981",
       description: input.description,
       amount: input.amount,
       paymentMethod: input.paymentMethod || "Bank",
     },
   });
-  cache.del(`dashboard_${userId}_${result.month}`);
+  invalidateUserDashboard(userId);
   return result;
 }
 
@@ -59,7 +59,7 @@ export async function updateIncome(
   id: string,
   input: Partial<IncomeInput>
 ) {
-  const income = await assertIncomeOwnership(userId, id);
+  await assertIncomeOwnership(userId, id);
   const result = await prisma.income.update({
     where: { id },
     data: {
@@ -67,19 +67,16 @@ export async function updateIncome(
       month: input.date ? toMonthKey(input.date) : undefined,
     },
   });
-  cache.del(`dashboard_${userId}_${income.month}`);
-  if (result.month !== income.month) {
-    cache.del(`dashboard_${userId}_${result.month}`);
-  }
+  invalidateUserDashboard(userId);
   return result;
 }
 
-
 export async function deleteIncome(userId: string, id: string) {
-  const income = await assertIncomeOwnership(userId, id);
+  await assertIncomeOwnership(userId, id);
   await prisma.income.delete({ where: { id } });
-  cache.del(`dashboard_${userId}_${income.month}`);
+  invalidateUserDashboard(userId);
 }
+
 
 export async function getIncomeSummary(userId: string, month: string) {
   const incomes = await prisma.income.findMany({
