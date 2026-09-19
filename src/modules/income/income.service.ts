@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 import { toMonthKey } from "../../utils/date";
+import { cache } from "../../lib/cache";
 
 export interface IncomeInput {
   date: Date;
@@ -36,7 +37,7 @@ export async function listIncome(
 }
 
 export async function createIncome(userId: string, input: IncomeInput) {
-  return prisma.income.create({
+  const result = await prisma.income.create({
     data: {
       userId,
       date: input.date,
@@ -49,6 +50,8 @@ export async function createIncome(userId: string, input: IncomeInput) {
       paymentMethod: input.paymentMethod || "Bank",
     },
   });
+  cache.del(`dashboard_${userId}_${result.month}`);
+  return result;
 }
 
 export async function updateIncome(
@@ -56,20 +59,26 @@ export async function updateIncome(
   id: string,
   input: Partial<IncomeInput>
 ) {
-  await assertIncomeOwnership(userId, id);
-  return prisma.income.update({
+  const income = await assertIncomeOwnership(userId, id);
+  const result = await prisma.income.update({
     where: { id },
     data: {
       ...input,
       month: input.date ? toMonthKey(input.date) : undefined,
     },
   });
+  cache.del(`dashboard_${userId}_${income.month}`);
+  if (result.month !== income.month) {
+    cache.del(`dashboard_${userId}_${result.month}`);
+  }
+  return result;
 }
 
 
 export async function deleteIncome(userId: string, id: string) {
-  await assertIncomeOwnership(userId, id);
+  const income = await assertIncomeOwnership(userId, id);
   await prisma.income.delete({ where: { id } });
+  cache.del(`dashboard_${userId}_${income.month}`);
 }
 
 export async function getIncomeSummary(userId: string, month: string) {

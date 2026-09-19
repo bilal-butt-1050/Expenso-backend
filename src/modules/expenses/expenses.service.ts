@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 import { toMonthKey } from "../../utils/date";
+import { cache } from "../../lib/cache";
 
 export interface ExpenseInput {
   categoryId: string;
@@ -40,7 +41,7 @@ export async function listExpenses(
 
 export async function createExpense(userId: string, input: ExpenseInput) {
   await assertCategoryOwnership(userId, input.categoryId);
-  return prisma.expense.create({
+  const result = await prisma.expense.create({
     data: {
       userId,
       categoryId: input.categoryId,
@@ -54,15 +55,17 @@ export async function createExpense(userId: string, input: ExpenseInput) {
     },
     include: { category: true },
   });
+  cache.del(`dashboard_${userId}_${result.month}`);
+  return result;
 }
 
 export async function updateExpense(userId: string, id: string, input: Partial<ExpenseInput>) {
-  await assertExpenseOwnership(userId, id);
+  const expense = await assertExpenseOwnership(userId, id);
   if (input.categoryId) {
     await assertCategoryOwnership(userId, input.categoryId);
   }
 
-  return prisma.expense.update({
+  const result = await prisma.expense.update({
     where: { id },
     data: {
       ...input,
@@ -70,22 +73,31 @@ export async function updateExpense(userId: string, id: string, input: Partial<E
     },
     include: { category: true },
   });
+  
+  cache.del(`dashboard_${userId}_${expense.month}`);
+  if (result.month !== expense.month) {
+    cache.del(`dashboard_${userId}_${result.month}`);
+  }
+  return result;
 }
 
 export async function deleteExpense(userId: string, id: string) {
-  await assertExpenseOwnership(userId, id);
+  const expense = await assertExpenseOwnership(userId, id);
   await prisma.expense.delete({ where: { id } });
+  cache.del(`dashboard_${userId}_${expense.month}`);
 }
 
 // A quick one-tap toggle for the most common action on this screen: marking
 // something paid once you've cleared the bill.
 export async function toggleExpenseStatus(userId: string, id: string) {
   const expense = await assertExpenseOwnership(userId, id);
-  return prisma.expense.update({
+  const result = await prisma.expense.update({
     where: { id },
     data: { status: expense.status === "Paid" ? "Unpaid" : "Paid" },
     include: { category: true },
   });
+  cache.del(`dashboard_${userId}_${expense.month}`);
+  return result;
 }
 
 async function assertExpenseOwnership(userId: string, id: string) {
