@@ -69,6 +69,7 @@ model Expense {
 
   @@index([userId, month])
   @@index([userId, categoryId])
+  @@index([userId, status, month])
   @@map("expenses")
 }
 

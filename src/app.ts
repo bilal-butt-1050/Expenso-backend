@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
+import compression from "compression";
+import { rateLimit } from "express-rate-limit";
 import { env } from "./config/env";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { authRouter } from "./modules/auth/auth.routes";
@@ -17,6 +19,17 @@ export function createApp() {
   app.use(helmet());
   app.use(cors({ origin: env.corsOrigin }));
   app.use(express.json());
+  
+  app.use(compression());
+  app.use(
+    rateLimit({
+      windowMs: 15 * 60 * 1000, // 15 minutes
+      limit: 100, // Limit each IP to 100 requests per window
+      standardHeaders: "draft-7",
+      legacyHeaders: false,
+    })
+  );
+
   if (env.nodeEnv !== "test") {
     app.use(morgan(env.nodeEnv === "production" ? "combined" : "dev"));
   }

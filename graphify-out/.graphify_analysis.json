@@ -1,0 +1,377 @@
+{
+  "communities": {
+    "0": [
+      "ref_express",
+      "ref_zod",
+      "src_middleware_auth",
+      "src_middleware_auth_requireauth",
+      "src_middleware_errorhandler",
+      "src_modules_budgets_budgets_routes",
+      "src_modules_budgets_budgets_routes_budgetschema",
+      "src_modules_budgets_budgets_service",
+      "src_modules_budgets_budgets_service_deletebudget",
+      "src_modules_budgets_budgets_service_listbudgets",
+      "src_modules_budgets_budgets_service_upsertbudget",
+      "src_modules_categories_categories_routes",
+      "src_modules_categories_categories_routes_categoriesrouter",
+      "src_modules_categories_categories_routes_createschema",
+      "src_modules_categories_categories_routes_hexcolor",
+      "src_modules_categories_categories_routes_updateschema",
+      "src_modules_categories_categories_service",
+      "src_modules_categories_categories_service_assertownership",
+      "src_modules_categories_categories_service_createcategory",
+      "src_modules_categories_categories_service_deletecategory",
+      "src_modules_categories_categories_service_getorcreateothercategory",
+      "src_modules_categories_categories_service_listcategories",
+      "src_modules_categories_categories_service_updatecategory",
+      "src_modules_dashboard_dashboard_routes",
+      "src_utils_asynchandler",
+      "src_utils_asynchandler_apperror",
+      "src_utils_asynchandler_apperror_constructor",
+      "src_utils_asynchandler_asynchandler",
+      "src_utils_asynchandler_asyncroutehandler",
+      "src_utils_jwt_verifytoken"
+    ],
+    "1": [
+      "ref_resend",
+      "src_modules_auth_auth_routes",
+      "src_modules_auth_auth_routes_authrouter",
+      "src_modules_auth_auth_routes_changepasswordschema",
+      "src_modules_auth_auth_routes_googleschema",
+      "src_modules_auth_auth_routes_loginschema",
+      "src_modules_auth_auth_routes_registerschema",
+      "src_modules_auth_auth_routes_sendotpschema",
+      "src_modules_auth_auth_routes_updateprofileschema",
+      "src_modules_auth_auth_service",
+      "src_modules_auth_auth_service_changepassword",
+      "src_modules_auth_auth_service_default_categories",
+      "src_modules_auth_auth_service_generateandsendotp",
+      "src_modules_auth_auth_service_getuserbyid",
+      "src_modules_auth_auth_service_googleclient",
+      "src_modules_auth_auth_service_loginuser",
+      "src_modules_auth_auth_service_loginwithgoogle",
+      "src_modules_auth_auth_service_registeruser",
+      "src_modules_auth_auth_service_topublicuser",
+      "src_modules_auth_auth_service_updateuserprofile",
+      "src_modules_auth_email_service",
+      "src_modules_auth_email_service_resend",
+      "src_modules_auth_email_service_sendotpemail",
+      "src_utils_jwt_signtoken",
+      "src_utils_password",
+      "src_utils_password_comparepassword",
+      "src_utils_password_hashpassword"
+    ],
+    "2": [
+      "prisma_seed",
+      "prisma_seed_main",
+      "src_lib_prisma",
+      "src_lib_prisma_prisma",
+      "src_modules_dashboard_dashboard_service",
+      "src_modules_dashboard_dashboard_service_getdashboardsummary",
+      "src_modules_dashboard_dashboard_service_getmonthlytrend",
+      "src_modules_dashboard_dashboard_service_getpreviousmonth",
+      "src_modules_dashboard_dashboard_service_sum",
+      "src_modules_income_income_routes",
+      "src_modules_income_income_routes_incomerouter",
+      "src_modules_income_income_routes_incomeschema",
+      "src_modules_income_income_routes_queryschema",
+      "src_modules_income_income_routes_updateincomeschema",
+      "src_modules_income_income_service",
+      "src_modules_income_income_service_assertincomeownership",
+      "src_modules_income_income_service_createincome",
+      "src_modules_income_income_service_deleteincome",
+      "src_modules_income_income_service_getincomesummary",
+      "src_modules_income_income_service_incomeinput",
+      "src_modules_income_income_service_listincome",
+      "src_modules_income_income_service_updateincome",
+      "src_utils_date",
+      "src_utils_date_isvalidmonthkey",
+      "src_utils_date_trailingmonths"
+    ],
+    "3": [
+      "package",
+      "package_description",
+      "package_main",
+      "package_name",
+      "package_private",
+      "package_version",
+      "ref_bcryptjs",
+      "ref_dotenv",
+      "ref_google_auth_library",
+      "ref_morgan",
+      "ref_prisma",
+      "ref_prisma_client",
+      "ref_tsx",
+      "ref_types_bcryptjs",
+      "ref_types_cors",
+      "ref_types_express",
+      "ref_types_jsonwebtoken",
+      "ref_types_morgan",
+      "ref_types_node",
+      "ref_typescript",
+      "scripts_remove_savings",
+      "scripts_remove_savings_main",
+      "scripts_remove_savings_prisma"
+    ],
+    "4": [
+      "tsconfig",
+      "tsconfig_compileroptions",
+      "tsconfig_compileroptions_declaration",
+      "tsconfig_compileroptions_esmoduleinterop",
+      "tsconfig_compileroptions_forceconsistentcasinginfilenames",
+      "tsconfig_compileroptions_lib",
+      "tsconfig_compileroptions_module",
+      "tsconfig_compileroptions_moduleresolution",
+      "tsconfig_compileroptions_noimplicitreturns",
+      "tsconfig_compileroptions_nounusedlocals",
+      "tsconfig_compileroptions_nounusedparameters",
+      "tsconfig_compileroptions_outdir",
+      "tsconfig_compileroptions_resolvejsonmodule",
+      "tsconfig_compileroptions_rootdir",
+      "tsconfig_compileroptions_skiplibcheck",
+      "tsconfig_compileroptions_sourcemap",
+      "tsconfig_compileroptions_strict",
+      "tsconfig_compileroptions_target",
+      "tsconfig_exclude",
+      "tsconfig_include"
+    ],
+    "5": [
+      "ref_cors",
+      "ref_helmet",
+      "ref_jsonwebtoken",
+      "src_app",
+      "src_app_createapp",
+      "src_config_env",
+      "src_config_env_env",
+      "src_config_env_required",
+      "src_middleware_errorhandler_errorhandler",
+      "src_middleware_errorhandler_notfoundhandler",
+      "src_modules_budgets_budgets_routes_budgetsrouter",
+      "src_modules_dashboard_dashboard_routes_dashboardrouter",
+      "src_server",
+      "src_server_app",
+      "src_utils_jwt",
+      "src_utils_jwt_jwtpayload"
+    ],
+    "6": [
+      "src_modules_dashboard_dashboard_routes_queryschema",
+      "src_modules_expenses_expenses_routes",
+      "src_modules_expenses_expenses_routes_expenseschema",
+      "src_modules_expenses_expenses_routes_expensesrouter",
+      "src_modules_expenses_expenses_routes_queryschema",
+      "src_modules_expenses_expenses_routes_updateexpenseschema",
+      "src_modules_expenses_expenses_service",
+      "src_modules_expenses_expenses_service_assertcategoryownership",
+      "src_modules_expenses_expenses_service_assertexpenseownership",
+      "src_modules_expenses_expenses_service_createexpense",
+      "src_modules_expenses_expenses_service_deleteexpense",
+      "src_modules_expenses_expenses_service_expenseinput",
+      "src_modules_expenses_expenses_service_listexpenses",
+      "src_modules_expenses_expenses_service_toggleexpensestatus",
+      "src_modules_expenses_expenses_service_updateexpense",
+      "src_utils_date_tomonthkey"
+    ],
+    "7": [
+      "package_dependencies",
+      "package_dependencies_bcryptjs",
+      "package_dependencies_cors",
+      "package_dependencies_dotenv",
+      "package_dependencies_express",
+      "package_dependencies_google_auth_library",
+      "package_dependencies_helmet",
+      "package_dependencies_jsonwebtoken",
+      "package_dependencies_morgan",
+      "package_dependencies_prisma_client",
+      "package_dependencies_resend",
+      "package_dependencies_zod"
+    ],
+    "8": [
+      "package_devdependencies",
+      "package_devdependencies_prisma",
+      "package_devdependencies_tsx",
+      "package_devdependencies_types_bcryptjs",
+      "package_devdependencies_types_cors",
+      "package_devdependencies_types_express",
+      "package_devdependencies_types_jsonwebtoken",
+      "package_devdependencies_types_morgan",
+      "package_devdependencies_types_node",
+      "package_devdependencies_typescript"
+    ],
+    "9": [
+      "package_scripts",
+      "package_scripts_build",
+      "package_scripts_dev",
+      "package_scripts_lint",
+      "package_scripts_prisma_generate",
+      "package_scripts_prisma_migrate",
+      "package_scripts_prisma_studio",
+      "package_scripts_seed",
+      "package_scripts_start",
+      "package_scripts_typecheck"
+    ],
+    "10": [
+      "src_types_express_d",
+      "src_types_express_d_express",
+      "src_types_express_d_request"
+    ]
+  },
+  "cohesion": {
+    "0": 0.15862068965517243,
+    "1": 0.1396011396011396,
+    "2": 0.13666666666666666,
+    "3": 0.08695652173913043,
+    "4": 0.1,
+    "5": 0.18333333333333332,
+    "6": 0.225,
+    "7": 0.16666666666666666,
+    "8": 0.2,
+    "9": 0.2,
+    "10": 0.6666666666666666
+  },
+  "gods": [
+    {
+      "id": "src_utils_asynchandler_apperror",
+      "label": "AppError",
+      "degree": 24
+    },
+    {
+      "id": "tsconfig_compileroptions",
+      "label": "compilerOptions",
+      "degree": 17
+    },
+    {
+      "id": "ref_express",
+      "label": "express",
+      "degree": 11
+    },
+    {
+      "id": "src_utils_date_tomonthkey",
+      "label": "toMonthKey()",
+      "degree": 10
+    },
+    {
+      "id": "package_scripts",
+      "label": "scripts",
+      "degree": 10
+    },
+    {
+      "id": "src_middleware_auth_requireauth",
+      "label": "requireAuth()",
+      "degree": 9
+    },
+    {
+      "id": "src_modules_auth_auth_service_registeruser",
+      "label": "registerUser()",
+      "degree": 8
+    },
+    {
+      "id": "ref_zod",
+      "label": "zod",
+      "degree": 8
+    },
+    {
+      "id": "src_lib_prisma_prisma",
+      "label": "prisma",
+      "degree": 8
+    },
+    {
+      "id": "src_utils_asynchandler_asynchandler",
+      "label": "asyncHandler()",
+      "degree": 7
+    }
+  ],
+  "surprises": [
+    {
+      "source": "main()",
+      "target": "registerUser()",
+      "source_files": [
+        "prisma/seed.ts",
+        "src/modules/auth/auth.service.ts"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories; bridges separate communities; peripheral node `main()` unexpectedly reaches hub `registerUser()`"
+    },
+    {
+      "source": "changePassword()",
+      "target": "AppError",
+      "source_files": [
+        "src/modules/auth/auth.service.ts",
+        "src/utils/asyncHandler.ts"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "bridges separate communities"
+    },
+    {
+      "source": "generateAndSendOtp()",
+      "target": "AppError",
+      "source_files": [
+        "src/modules/auth/auth.service.ts",
+        "src/utils/asyncHandler.ts"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "bridges separate communities"
+    },
+    {
+      "source": "getUserById()",
+      "target": "AppError",
+      "source_files": [
+        "src/modules/auth/auth.service.ts",
+        "src/utils/asyncHandler.ts"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "bridges separate communities"
+    },
+    {
+      "source": "loginUser()",
+      "target": "AppError",
+      "source_files": [
+        "src/modules/auth/auth.service.ts",
+        "src/utils/asyncHandler.ts"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "bridges separate communities"
+    }
+  ],
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `express` connect `AppError` to `auth.service.ts`, `income.routes.ts`, `package.json`, `app.ts`, `expenses.routes.ts`?",
+      "why": "High betweenness centrality (0.125) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `zod` connect `AppError` to `auth.service.ts`, `income.routes.ts`, `package.json`, `expenses.routes.ts`?",
+      "why": "High betweenness centrality (0.098) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `dependencies` connect `dependencies` to `package.json`?",
+      "why": "High betweenness centrality (0.098) - this node is a cross-community bridge."
+    },
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `AsyncRouteHandler`, `Request`, `IncomeInput` to the rest of the system?",
+      "why": "88 weakly-connected nodes found - possible documentation gaps or missing edges."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `auth.service.ts` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.1396011396011396 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `income.routes.ts` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.13666666666666666 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `package.json` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.08695652173913043 - nodes in this community are weakly interconnected."
+    }
+  ]
+}

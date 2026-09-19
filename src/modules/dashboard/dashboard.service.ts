@@ -1,11 +1,16 @@
 import { prisma } from "../../lib/prisma";
 import { trailingMonths } from "../../utils/date";
+import { cache } from "../../lib/cache";
 
 /**
  * Aggregates and computes all dashboard metrics for a given user and month,
  * including income, total and categorized expenses, budget progress, and historical trends.
  */
 export async function getDashboardSummary(userId: string, month: string) {
+  const cacheKey = `dashboard_${userId}_${month}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+
   const prevMonth = getPreviousMonth(month);
   const [_user, monthIncomes, monthExpenses, prevMonthExpenses, allIncomeAgg, allPaidExpensesAgg, unpaidAgg, budgets, prevMonthBudgets, categories] =
     await Promise.all([
@@ -144,7 +149,7 @@ export async function getDashboardSummary(userId: string, month: string) {
 
   const trend = await getMonthlyTrend(userId, month, 12);
 
-  return {
+  const result = {
     month,
     plannedSavings,
     rolloverSavings,
@@ -171,6 +176,9 @@ export async function getDashboardSummary(userId: string, month: string) {
     budgetVsActual,
     trend,
   };
+
+  cache.set(cacheKey, result);
+  return result;
 }
 
 async function getMonthlyTrend(userId: string, month: string, count: number) {
