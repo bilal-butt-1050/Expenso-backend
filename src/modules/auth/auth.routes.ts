@@ -13,8 +13,8 @@ const sendOtpSchema = z.object({
 const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8, "Password must be at least 8 characters"),
-  otp: z.string().length(6, "OTP must be exactly 6 digits"),
   name: z.string().min(1, "Name is required"),
+  otp: z.string().length(6, "OTP must be exactly 6 digits").optional(),
 });
 
 const loginSchema = z.object({
@@ -50,10 +50,11 @@ authRouter.post(
   "/register",
   asyncHandler(async (req, res) => {
     const body = registerSchema.parse(req.body);
-    const result = await registerUser(body.email, body.password, body.otp, body.name);
+    const result = await registerUser(body.email, body.password, body.name, body.otp);
     res.status(201).json(result);
   })
 );
+
 
 authRouter.post(
   "/login",
