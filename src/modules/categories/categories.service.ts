@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
+import { invalidateUserDashboard } from "../../lib/cache";
 
 export async function listCategories(userId: string) {
   const categories = await prisma.category.findMany({
@@ -23,9 +24,11 @@ export async function createCategory(
     throw new AppError(400, "Maximum of 20 categories allowed");
   }
 
-  return prisma.category.create({
+  const result = await prisma.category.create({
     data: { userId, name: data.name, icon: data.icon, color: data.color, isDefault: false },
   });
+  invalidateUserDashboard(userId);
+  return result;
 }
 
 export async function updateCategory(
@@ -39,7 +42,9 @@ export async function updateCategory(
     throw new AppError(400, `The "${category.name}" category cannot be modified`);
   }
 
-  return prisma.category.update({ where: { id: categoryId }, data });
+  const result = await prisma.category.update({ where: { id: categoryId }, data });
+  invalidateUserDashboard(userId);
+  return result;
 }
 
 // Deleting a category re-homes its expenses/budgets to the user's "Other"
@@ -68,8 +73,10 @@ export async function deleteCategory(userId: string, categoryId: string) {
     prisma.category.delete({ where: { id: categoryId } }),
   ]);
 
+  invalidateUserDashboard(userId);
   return { movedTo: fallback.name };
 }
+
 
 async function assertOwnership(userId: string, categoryId: string) {
   const category = await prisma.category.findFirst({ where: { id: categoryId, userId } });

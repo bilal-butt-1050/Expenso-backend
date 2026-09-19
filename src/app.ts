@@ -21,14 +21,25 @@ export function createApp() {
   app.use(express.json());
   
   app.use(compression());
+
+  // General rate limiter for standard app interactions (500 req / 15 min)
   app.use(
     rateLimit({
-      windowMs: 15 * 60 * 1000, // 15 minutes
-      limit: 100, // Limit each IP to 100 requests per window
+      windowMs: 15 * 60 * 1000,
+      limit: 500,
       standardHeaders: "draft-7",
       legacyHeaders: false,
     })
   );
+
+  // Strict rate limiter for sensitive authentication endpoints
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 20,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "Too many authentication attempts. Please try again later." },
+  });
 
   if (env.nodeEnv !== "test") {
     app.use(morgan(env.nodeEnv === "production" ? "combined" : "dev"));
@@ -36,12 +47,13 @@ export function createApp() {
 
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
-  app.use("/auth", authRouter);
+  app.use("/auth", authLimiter, authRouter);
   app.use("/categories", categoriesRouter);
   app.use("/expenses", expensesRouter);
   app.use("/income", incomeRouter);
   app.use("/budgets", budgetsRouter);
   app.use("/dashboard", dashboardRouter);
+
 
   app.use(notFoundHandler);
   app.use(errorHandler);

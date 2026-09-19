@@ -3,6 +3,7 @@ node_modules/
 
 # Production build output
 dist/
+graphify-out/
 
 # Environment variables & secrets
 .env
