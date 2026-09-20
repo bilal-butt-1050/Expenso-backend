@@ -7,19 +7,25 @@ import { registerUser, loginUser, getUserById, updateUserProfile, generateAndSen
 export const authRouter = Router();
 
 const sendOtpSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email("Please provide a valid email address"),
 });
 
 const registerSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email("Please provide a valid email address"),
   password: z.string().min(8, "Password must be at least 8 characters"),
-  name: z.string().min(1, "Name is required"),
-  otp: z.string().length(6, "OTP must be exactly 6 digits").optional(),
+  name: z.string().trim().min(1, "Name is required"),
+  otp: z
+    .string()
+    .trim()
+    .length(6, "OTP must be exactly 6 digits")
+    .optional()
+    .or(z.literal(""))
+    .transform((val) => (val ? val : undefined)),
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().trim().toLowerCase().email("Please provide a valid email address"),
+  password: z.string().min(1, "Password is required"),
 });
 
 const googleSchema = z.object({

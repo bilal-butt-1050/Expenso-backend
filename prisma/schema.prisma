@@ -27,6 +27,7 @@ model User {
   expenses   Expense[]
   incomes    Income[]
   budgets    Budget[]
+  loans      Loan[]
 
   @@map("users")
 }
@@ -118,3 +119,35 @@ model OtpVerification {
 
   @@map("otp_verifications")
 }
+
+enum LoanType {
+  LENT
+  BORROWED
+}
+
+enum LoanStatus {
+  PENDING
+  PARTIAL
+  SETTLED
+}
+
+// Stores records of money lent to others (they owe user) or borrowed from others (user owes them)
+model Loan {
+  id            String     @id @default(uuid())
+  userId        String
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type          LoanType   @default(LENT)
+  personName    String
+  amount        Float
+  settledAmount Float      @default(0)
+  dueDate       DateTime?
+  status        LoanStatus @default(PENDING)
+  notes         String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, type])
+  @@map("loans")
+}
+

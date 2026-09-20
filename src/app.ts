@@ -12,6 +12,7 @@ import { expensesRouter } from "./modules/expenses/expenses.routes";
 import { incomeRouter } from "./modules/income/income.routes";
 import { budgetsRouter } from "./modules/budgets/budgets.routes";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes";
+import { loansRouter } from "./modules/loans/loans.routes";
 
 export function createApp() {
   const app = express();
@@ -53,7 +54,7 @@ export function createApp() {
   app.use("/income", incomeRouter);
   app.use("/budgets", budgetsRouter);
   app.use("/dashboard", dashboardRouter);
-
+  app.use("/loans", loansRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
