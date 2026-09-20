@@ -21,7 +21,20 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            set -e
             cd ~/expenso-backend
             git pull origin ${{ github.ref_name }}
-            docker compose up -d --build
+
+            echo "==> Building backend service..."
+            docker compose build api
+
+            echo "==> Synchronizing database schema safely..."
+            # Run schema sync via one-off container against the live postgres service.
+            # Prisma db push automatically detects and aborts on any data loss, protecting production data.
+            docker compose run --rm api npx prisma db push --skip-generate
+
+            echo "==> Restarting services..."
+            docker compose up -d
+
+            echo "==> Pruning dangling images..."
             docker image prune -f
