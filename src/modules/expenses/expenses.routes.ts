@@ -20,7 +20,7 @@ const expenseSchema = z.object({
   amount: z.number().positive(),
   paymentMethod: z.enum(["Cash", "Bank Transfer", "Card", "Cheque"]).optional(),
   needWant: z.enum(["Need", "Want"]).optional(),
-  status: z.enum(["Paid", "Unpaid"]).optional(),
+  status: z.enum(["Paid"]).optional(),
 });
 
 const updateExpenseSchema = expenseSchema.partial();
@@ -28,7 +28,7 @@ const updateExpenseSchema = expenseSchema.partial();
 const querySchema = z.object({
   month: z.string().optional(),
   categoryId: z.string().uuid().optional(),
-  status: z.enum(["Paid", "Unpaid"]).optional(),
+  status: z.string().optional(),
   skip: z.coerce.number().min(0).optional(),
   take: z.coerce.number().min(1).max(100).optional(),
 });

@@ -1,5 +1,7 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
+import { toMonthKey } from "../../utils/date";
+import { invalidateUserDashboard } from "../../lib/cache";
 
 export interface CreateLoanInput {
   type: "LENT" | "BORROWED";
@@ -95,31 +97,111 @@ export async function settleLoan(
   loanId: string,
   paymentAmount?: number
 ) {
-  const loan = await prisma.loan.findFirst({
-    where: { id: loanId, userId },
+  const updatedLoan = await prisma.$transaction(async (tx) => {
+    const loan = await tx.loan.findFirst({
+      where: { id: loanId, userId },
+    });
+
+    if (!loan) {
+      throw new AppError(404, "Loan record not found");
+    }
+
+    const remaining = Math.max(0, loan.amount - loan.settledAmount);
+
+    if (loan.status === "SETTLED" || remaining <= 0) {
+      throw new AppError(400, "Loan is already fully settled");
+    }
+
+    if (paymentAmount !== undefined && paymentAmount <= 0) {
+      throw new AppError(400, "Payment amount must be greater than zero");
+    }
+
+    const requestedPayment =
+      paymentAmount !== undefined ? paymentAmount : remaining;
+    const actualPayment = Math.min(requestedPayment, remaining);
+
+    const newSettled = Math.min(
+      loan.amount,
+      Math.round((loan.settledAmount + actualPayment) * 100) / 100
+    );
+    const newStatus = newSettled >= loan.amount ? "SETTLED" : "PARTIAL";
+
+    const updated = await tx.loan.update({
+      where: { id: loanId },
+      data: {
+        settledAmount: newSettled,
+        status: newStatus,
+      },
+    });
+
+    if (actualPayment > 0) {
+      const now = new Date();
+      const month = toMonthKey(now);
+
+      if (loan.type === "BORROWED") {
+        // Settling borrowed debt -> auto-create Expense
+        let category = await tx.category.findFirst({
+          where: { userId, name: "Bills" },
+        });
+        if (!category) {
+          category = await tx.category.findFirst({
+            where: { userId, name: "Other" },
+          });
+        }
+        if (!category) {
+          category = await tx.category.findFirst({
+            where: { userId },
+            orderBy: { createdAt: "asc" },
+          });
+        }
+        if (!category) {
+          category = await tx.category.create({
+            data: {
+              userId,
+              name: "Bills",
+              icon: "file-document",
+              color: "#0EA5E9",
+              isDefault: true,
+            },
+          });
+        }
+
+        await tx.expense.create({
+          data: {
+            userId,
+            categoryId: category.id,
+            date: now,
+            month,
+            description: `Loan repayment: ${loan.personName}`,
+            amount: actualPayment,
+            paymentMethod: "Cash",
+            needWant: "Need",
+            status: "Paid",
+          },
+        });
+      } else {
+        // Settling lent loan -> auto-create Income
+        await tx.income.create({
+          data: {
+            userId,
+            date: now,
+            month,
+            source: `Loan repayment: ${loan.personName}`,
+            sourceIcon: "cash-multiple",
+            sourceColor: "#00E676",
+            description: `Loan repayment: ${loan.personName}`,
+            amount: actualPayment,
+            paymentMethod: "Cash",
+          },
+        });
+      }
+    }
+
+    return updated;
   });
 
-  if (!loan) {
-    throw new AppError(404, "Loan record not found");
-  }
-
-  let newSettled: number;
-  if (paymentAmount !== undefined && paymentAmount > 0) {
-    newSettled = Math.min(loan.amount, loan.settledAmount + paymentAmount);
-  } else {
-    // Settle in full
-    newSettled = loan.amount;
-  }
-
-  const newStatus = newSettled >= loan.amount ? "SETTLED" : "PARTIAL";
-
-  return prisma.loan.update({
-    where: { id: loanId },
-    data: {
-      settledAmount: newSettled,
-      status: newStatus,
-    },
-  });
+  invalidateUserDashboard(userId);
+  return updatedLoan;
 }
 
 export async function updateLoan(
