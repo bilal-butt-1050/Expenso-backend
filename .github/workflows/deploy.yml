@@ -23,7 +23,15 @@ jobs:
           script: |
             set -e
             cd ~/expenso-backend
-            git pull origin ${{ github.ref_name }}
+
+            echo "==> Inspecting server changes and syncing with origin/${{ github.ref_name }}..."
+            git diff || true
+            git stash || true
+            git fetch origin ${{ github.ref_name }}
+            git reset --hard origin/${{ github.ref_name }}
+
+            echo "==> Ensuring database service is running..."
+            docker compose up -d db
 
             echo "==> Building backend service..."
             docker compose build api
@@ -33,7 +41,7 @@ jobs:
             # Prisma db push automatically detects and aborts on any data loss, protecting production data.
             docker compose run --rm api npx prisma db push --skip-generate
 
-            echo "==> Restarting services..."
+            echo "==> Launching updated services..."
             docker compose up -d
 
             echo "==> Pruning dangling images..."
