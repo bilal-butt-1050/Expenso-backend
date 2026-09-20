@@ -64,13 +64,12 @@ model Expense {
   amount        Float
   paymentMethod String   @default("Cash")
   needWant      String   @default("Need") // "Need" | "Want"
-  status        String   @default("Paid") // "Paid" | "Unpaid"
+  status        String   @default("Paid") // All expenses represent settled cashflows ("Paid")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@index([userId, month])
   @@index([userId, categoryId])
-  @@index([userId, status, month])
   @@map("expenses")
 }
 

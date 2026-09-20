@@ -10,7 +10,7 @@ export interface ExpenseInput {
   amount: number;
   paymentMethod?: string;
   needWant?: "Need" | "Want";
-  status?: "Paid" | "Unpaid";
+  status?: "Paid";
 }
 
 export async function listExpenses(
@@ -25,7 +25,6 @@ export async function listExpenses(
       userId,
       month: filters.month,
       categoryId: filters.categoryId,
-      status: filters.status,
     },
     include: { category: true },
     orderBy: { date: "desc" },
@@ -51,7 +50,7 @@ export async function createExpense(userId: string, input: ExpenseInput) {
       amount: input.amount,
       paymentMethod: input.paymentMethod,
       needWant: input.needWant,
-      status: input.status,
+      status: "Paid",
     },
     include: { category: true },
   });
@@ -70,6 +69,7 @@ export async function updateExpense(userId: string, id: string, input: Partial<E
     where: { id },
     data: {
       ...input,
+      status: "Paid",
       month: input.date ? toMonthKey(input.date) : undefined,
     },
     include: { category: true },
@@ -85,13 +85,15 @@ export async function deleteExpense(userId: string, id: string) {
   invalidateUserDashboard(userId);
 }
 
-// A quick one-tap toggle for the most common action on this screen: marking
-// something paid once you've cleared the bill.
+/**
+ * @deprecated Expenses strictly represent settled cashflows ("Paid").
+ * Retained for backwards compatibility: ensures the expense is marked "Paid".
+ */
 export async function toggleExpenseStatus(userId: string, id: string) {
-  const expense = await assertExpenseOwnership(userId, id);
+  await assertExpenseOwnership(userId, id);
   const result = await prisma.expense.update({
     where: { id },
-    data: { status: expense.status === "Paid" ? "Unpaid" : "Paid" },
+    data: { status: "Paid" },
     include: { category: true },
   });
   invalidateUserDashboard(userId);
