@@ -10,17 +10,17 @@ const sendOtpSchema = z.object({
   email: z.string().trim().toLowerCase().email("Please provide a valid email address"),
 });
 
+/**
+ * `otp` stays optional at the schema level, but its *meaning* changed: a supplied code is now
+ * always verified by the service, and whether one is mandatory is governed by
+ * `REQUIRE_EMAIL_VERIFICATION`. Previously an omitted field silently skipped verification.
+ * The empty-string escape hatch is gone — a blank code is now a validation error, not a bypass.
+ */
 const registerSchema = z.object({
   email: z.string().trim().toLowerCase().email("Please provide a valid email address"),
   password: z.string().min(8, "Password must be at least 8 characters"),
   name: z.string().trim().min(1, "Name is required"),
-  otp: z
-    .string()
-    .trim()
-    .length(6, "OTP must be exactly 6 digits")
-    .optional()
-    .or(z.literal(""))
-    .transform((val) => (val ? val : undefined)),
+  otp: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code sent to your email").optional(),
 });
 
 const loginSchema = z.object({
@@ -32,10 +32,17 @@ const googleSchema = z.object({
   idToken: z.string().min(1),
 });
 
+/**
+ * Currencies the client can actually render. `formatCurrency` on mobile maps PKR to "Rs" and
+ * otherwise prints the raw code, so an arbitrary string here becomes a broken label on every
+ * amount in the app. Changing this is a display setting only — no amounts are converted.
+ */
+const SUPPORTED_CURRENCIES = ["PKR", "USD", "EUR", "GBP", "AED", "SAR", "INR", "CAD", "AUD"] as const;
+
 const updateProfileSchema = z.object({
-  name: z.string().min(1).optional(),
-  currency: z.string().min(1).optional(),
-  avatarUrl: z.string().url().nullable().optional(),
+  name: z.string().trim().min(1).max(80).optional(),
+  currency: z.enum(SUPPORTED_CURRENCIES).optional(),
+  avatarUrl: z.string().url().max(2048).nullable().optional(),
 });
 
 const changePasswordSchema = z.object({

@@ -1,5 +1,6 @@
 import { Resend } from "resend";
 import { env } from "../../config/env";
+import { AppError } from "../../utils/asyncHandler";
 
 const resend = new Resend(env.resendApiKey || "dummy-key");
 
@@ -30,14 +31,25 @@ export async function sendOtpEmail(email: string, otp: string) {
 
   try {
     await resend.emails.send({
-      from: "Expenso <auth@resend.dev>",
+      from: env.mailFrom,
       to: email,
       subject: "Your Expenso Verification Code",
       html,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Failed to send OTP email via Resend", error);
-    throw new Error("Failed to send verification email");
+
+    // Resend's shared resend.dev sender is testing-only: it delivers to the account owner and
+    // returns 403 for everyone else. Surfacing that as a generic failure made it look like an
+    // outage rather than a configuration gap.
+    if (error?.statusCode === 403 || error?.name === "validation_error") {
+      throw new AppError(
+        503,
+        "Email delivery is not configured for this address. Verify a sending domain and set MAIL_FROM."
+      );
+    }
+
+    throw new AppError(502, "Could not send the verification email. Please try again.");
   }
 }
 
