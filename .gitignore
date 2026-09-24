@@ -4,11 +4,17 @@ node_modules/
 # Production build output
 dist/
 graphify-out/
+*.tsbuildinfo
 
 # Environment variables & secrets
 .env
 .env.*
 !.env.example
+
+# Agent/tool scratch — never commit
+.agent/
+.agents/
+.claude/
 
 # Logs & debugging
 *.log
@@ -19,6 +25,3 @@ yarn-error.log*
 # OS metadata
 .DS_Store
 Thumbs.db
-
-# Legacy agent junction
-.agent/
