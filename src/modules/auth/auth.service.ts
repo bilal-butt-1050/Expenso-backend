@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { prisma } from "../../lib/prisma";
+import { cache } from "../../lib/cache";
 import { hashPassword, comparePassword } from "../../utils/password";
 import { signToken } from "../../utils/jwt";
 import { AppError } from "../../utils/asyncHandler";
@@ -28,10 +29,27 @@ export const DEFAULT_CATEGORIES = [
 
 const googleClient = new OAuth2Client(env.googleClientIdWeb || "dummy-client-id");
 
+/** Wrong codes tolerated before the OTP is burned and must be re-requested. */
+const OTP_MAX_ATTEMPTS = 5;
+/** Minimum gap between resend requests for the same address. */
+const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+const OTP_ATTEMPT_TTL_S = 15 * 60;
+
+const attemptKey = (email: string) => `otp_attempts_${email}`;
+const cooldownKey = (email: string) => `otp_cooldown_${email}`;
+
 export async function generateAndSendOtp(email: string) {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     throw new AppError(409, "An account with that email already exists");
+  }
+
+  // Per-address cooldown. The global IP limiter does not stop someone spraying one victim's
+  // inbox from rotating addresses, and it does not stop a client retry loop.
+  const lastSentAt = cache.get<number>(cooldownKey(email));
+  if (lastSentAt && Date.now() - lastSentAt < OTP_RESEND_COOLDOWN_MS) {
+    const waitSeconds = Math.ceil((OTP_RESEND_COOLDOWN_MS - (Date.now() - lastSentAt)) / 1000);
+    throw new AppError(429, `Please wait ${waitSeconds}s before requesting another code`);
   }
 
   // Cryptographically secure 6-digit OTP
@@ -45,24 +63,76 @@ export async function generateAndSendOtp(email: string) {
   });
 
   await sendOtpEmail(email, otp);
+
+  cache.set(cooldownKey(email), Date.now(), OTP_RESEND_COOLDOWN_MS / 1000);
+  cache.del(attemptKey(email));
 }
 
-export async function registerUser(email: string, password: string, name: string, otp?: string) {
+/**
+ * Verifies a signup code, consuming it on success.
+ *
+ * A 6-digit code is only 10^6 wide, so unlimited guesses are a real attack — the IP rate limiter
+ * alone permits 20 tries per window and an attacker can rotate IPs. Wrong guesses are counted per
+ * address and the code is destroyed once the budget is spent, forcing a fresh send.
+ *
+ * Compared in constant time so response latency does not leak how much of the code matched.
+ */
+async function consumeOtp(email: string, otp: string): Promise<void> {
+  const verification = await prisma.otpVerification.findUnique({ where: { email } });
+  if (!verification) {
+    throw new AppError(400, "Request a verification code first");
+  }
+
+  if (verification.expiresAt < new Date()) {
+    await prisma.otpVerification.delete({ where: { email } }).catch(() => {});
+    cache.del(attemptKey(email));
+    throw new AppError(400, "Verification code has expired. Request a new one.");
+  }
+
+  const expected = Buffer.from(verification.otp);
+  const supplied = Buffer.from(otp);
+  const matches =
+    expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+
+  if (!matches) {
+    const attempts = (cache.get<number>(attemptKey(email)) ?? 0) + 1;
+
+    if (attempts >= OTP_MAX_ATTEMPTS) {
+      await prisma.otpVerification.delete({ where: { email } }).catch(() => {});
+      cache.del(attemptKey(email));
+      throw new AppError(429, "Too many incorrect codes. Request a new one.");
+    }
+
+    cache.set(attemptKey(email), attempts, OTP_ATTEMPT_TTL_S);
+    throw new AppError(400, "Invalid verification code");
+  }
+
+  await prisma.otpVerification.delete({ where: { email } }).catch(() => {});
+  cache.del(attemptKey(email));
+}
+
+export async function registerUser(
+  email: string,
+  password: string,
+  name: string,
+  otp?: string
+) {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     throw new AppError(409, "An account with that email already exists");
   }
 
-  // If an OTP was provided, verify it
-  if (otp) {
-    const verification = await prisma.otpVerification.findUnique({ where: { email } });
-    if (!verification || verification.otp !== otp) {
-      throw new AppError(400, "Invalid verification code");
+  // Previously verification was skipped entirely whenever the client simply omitted `otp`, so
+  // any address could be registered with no proof of ownership. Now a supplied code is *always*
+  // checked, and whether one is mandatory is an explicit deployment decision rather than an
+  // accident of what the client happened to send.
+  if (env.requireEmailVerification) {
+    if (!otp) {
+      throw new AppError(400, "Enter the 6-digit code sent to your email");
     }
-    if (verification.expiresAt < new Date()) {
-      throw new AppError(400, "Verification code has expired");
-    }
-    await prisma.otpVerification.delete({ where: { email } }).catch(() => {});
+    await consumeOtp(email, otp);
+  } else if (otp) {
+    await consumeOtp(email, otp);
   }
 
   const passwordHash = await hashPassword(password);
@@ -99,19 +169,29 @@ export async function loginUser(email: string, password: string) {
 }
 
 export async function loginWithGoogle(idToken: string) {
-  const ticket = await googleClient.verifyIdToken({
-    idToken,
-    audience: [
-      env.googleClientIdWeb || "",
-      env.googleClientIdIos || "",
-      env.googleClientIdAndroid || "",
-    ].filter(Boolean),
-  });
+  const audience = [
+    env.googleClientIdWeb || "",
+    env.googleClientIdIos || "",
+    env.googleClientIdAndroid || "",
+  ].filter(Boolean);
 
+  // With no configured client ids the audience list is empty, which disables audience checking
+  // and would accept a Google token minted for any application at all.
+  if (audience.length === 0) {
+    throw new AppError(503, "Google sign-in is not configured");
+  }
+
+  const ticket = await googleClient.verifyIdToken({ idToken, audience });
 
   const payload = ticket.getPayload();
   if (!payload || !payload.email) {
     throw new AppError(400, "Invalid Google token");
+  }
+
+  // Without this, an unverified Google account bearing someone else's address would be linked
+  // onto their existing password account below, handing over the session.
+  if (payload.email_verified !== true) {
+    throw new AppError(403, "Your Google email address is not verified");
   }
 
   const { email, sub: googleId, name, picture } = payload;
