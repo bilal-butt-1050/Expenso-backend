@@ -7,6 +7,8 @@ import { AppError } from "../../utils/asyncHandler";
 import { sendOtpEmail } from "./email.service";
 import { OAuth2Client } from "google-auth-library";
 import { env } from "../../config/env";
+import { DEFAULT_TIMEZONE } from "../../utils/date";
+import { invalidateTokenVersionCache } from "../../middleware/auth";
 
 // Seeded once per new user with the FinTech design system palette — every one of
 // these can be renamed, recolored, or deleted afterwards.
@@ -145,7 +147,7 @@ export async function registerUser(
     },
   });
 
-  const token = signToken({ userId: user.id });
+  const token = signToken({ userId: user.id, tv: user.tokenVersion });
   return { token, user: toPublicUser(user) };
 }
 
@@ -164,7 +166,7 @@ export async function loginUser(email: string, password: string) {
     throw new AppError(401, "Invalid email or password");
   }
 
-  const token = signToken({ userId: user.id });
+  const token = signToken({ userId: user.id, tv: user.tokenVersion });
   return { token, user: toPublicUser(user) };
 }
 
@@ -220,7 +222,7 @@ export async function loginWithGoogle(idToken: string) {
     });
   }
 
-  const token = signToken({ userId: user.id });
+  const token = signToken({ userId: user.id, tv: user.tokenVersion });
   return { token, user: toPublicUser(user) };
 }
 
@@ -234,7 +236,7 @@ export async function getUserById(userId: string) {
 
 export async function updateUserProfile(
   userId: string,
-  data: { name?: string; currency?: string; avatarUrl?: string | null }
+  data: { name?: string; currency?: string; timezone?: string; avatarUrl?: string | null }
 ) {
   const user = await prisma.user.update({
     where: { id: userId },
@@ -265,10 +267,14 @@ export async function changePassword(userId: string, currentPassword?: string, n
   }
 
   const newHash = await hashPassword(newPassword);
+
+  // Bumping tokenVersion invalidates every token issued under the old password. Without this a
+  // leaked 30-day JWT kept working after the user changed their password to lock someone out.
   await prisma.user.update({
     where: { id: userId },
-    data: { passwordHash: newHash },
+    data: { passwordHash: newHash, tokenVersion: { increment: 1 } },
   });
+  invalidateTokenVersionCache(userId);
 }
 
 // Never leak the password hash back to a client.
@@ -277,6 +283,7 @@ function toPublicUser(user: {
   email: string;
   name: string | null;
   currency: string;
+  timezone?: string;
   avatarUrl?: string | null;
 }) {
   return {
@@ -284,6 +291,7 @@ function toPublicUser(user: {
     email: user.email,
     name: user.name,
     currency: user.currency,
+    timezone: user.timezone ?? DEFAULT_TIMEZONE,
     avatarUrl: user.avatarUrl ?? null,
   };
 }

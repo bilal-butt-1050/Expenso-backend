@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
+import { isValidTimeZone } from "../../utils/date";
 import { registerUser, loginUser, getUserById, updateUserProfile, generateAndSendOtp, loginWithGoogle, changePassword } from "./auth.service";
 
 export const authRouter = Router();
@@ -42,6 +43,9 @@ const SUPPORTED_CURRENCIES = ["PKR", "USD", "EUR", "GBP", "AED", "SAR", "INR", "
 const updateProfileSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   currency: z.enum(SUPPORTED_CURRENCIES).optional(),
+  // Month buckets are derived in this zone, so a bad value would silently misfile every
+  // transaction the user records from then on.
+  timezone: z.string().refine(isValidTimeZone, "Unknown time zone").optional(),
   avatarUrl: z.string().url().max(2048).nullable().optional(),
 });
 

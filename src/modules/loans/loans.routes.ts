@@ -21,10 +21,14 @@ const createLoanSchema = z.object({
   amount: z.number().positive("Amount must be greater than 0"),
   dueDate: z.string().datetime().optional().nullable(),
   notes: z.string().trim().max(500).optional().nullable(),
+  /** False records a debt that predates the app without fabricating a cash movement today. */
+  recordCashflow: z.boolean().optional(),
 });
 
 const settleLoanSchema = z.object({
   paymentAmount: z.number().positive("Payment amount must be greater than 0").optional(),
+  /** When the payment actually happened. Defaults to now. */
+  date: z.coerce.date().optional(),
 });
 
 const updateLoanSchema = z.object({
@@ -65,7 +69,7 @@ loansRouter.patch(
   "/:id/settle",
   asyncHandler(async (req, res) => {
     const body = settleLoanSchema.parse(req.body);
-    const updated = await settleLoan(req.userId!, req.params.id, body.paymentAmount);
+    const updated = await settleLoan(req.userId!, req.params.id, body.paymentAmount, body.date);
     res.json(updated);
   })
 );

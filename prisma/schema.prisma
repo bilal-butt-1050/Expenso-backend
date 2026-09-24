@@ -21,13 +21,20 @@ model User {
   name         String?
   avatarUrl    String?
   currency     String   @default("PKR")
+  // IANA zone. Month buckets are derived in the user's own time, not UTC — logging an expense at
+  // 2am on the 1st in PKT was landing it in the previous month.
+  timezone     String   @default("Asia/Karachi")
+  // Bumped on password change and embedded in the JWT, so changing a password actually ends
+  // other sessions. Without it a leaked 30-day token outlived the password it was issued under.
+  tokenVersion Int      @default(0)
   createdAt    DateTime @default(now())
 
-  categories Category[]
-  expenses   Expense[]
-  incomes    Income[]
-  budgets    Budget[]
-  loans      Loan[]
+  categories   Category[]
+  expenses     Expense[]
+  incomes      Income[]
+  budgets      Budget[]
+  loans        Loan[]
+  transactions Transaction[]
 
   @@map("users")
 }
@@ -45,13 +52,18 @@ model Category {
   isDefault Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  expenses Expense[]
-  budgets  Budget[]
+  expenses     Expense[]
+  budgets      Budget[]
+  transactions Transaction[]
 
   @@unique([userId, name])
   @@map("categories")
 }
 
+/// DEPRECATED — superseded by `Transaction` with kind = SPEND.
+/// Retained so the migration that backfills `transactions` does not drop the source data.
+/// Nothing reads or writes this model; it is dropped in a follow-up migration once the unified
+/// ledger has been verified in production.
 model Expense {
   id            String   @id @default(uuid())
   userId        String
@@ -73,7 +85,7 @@ model Expense {
   @@map("expenses")
 }
 
-// Stores itemized user income records (salary, freelance, investments, etc.)
+/// DEPRECATED — superseded by `Transaction` with kind = EARN. See the note on `Expense`.
 model Income {
   id            String   @id @default(uuid())
   userId        String
@@ -100,7 +112,7 @@ model Budget {
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  amount     Float
+  amount     Decimal  @db.Decimal(14, 2)
   month      String   // "YYYY-MM"
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -137,16 +149,83 @@ model Loan {
   user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   type          LoanType   @default(LENT)
   personName    String
-  amount        Float
-  settledAmount Float      @default(0)
+  amount        Decimal    @db.Decimal(14, 2)
+  settledAmount Decimal    @default(0) @db.Decimal(14, 2)
   dueDate       DateTime?
   status        LoanStatus @default(PENDING)
   notes         String?
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
+  transactions Transaction[]
+
   @@index([userId, status])
   @@index([userId, type])
   @@map("loans")
+}
+
+/// What a movement of money *is*. This is the distinction the old split between `Expense` and
+/// `Income` could not express, and its absence is why lending money and collecting it back
+/// invented net worth: creating a loan wrote no cashflow, but settling one wrote income.
+///
+///   kind       cash   counts as spending   counts as income   linked to a loan
+///   SPEND       −           yes                  no                 no
+///   EARN        +           no                   yes                no
+///   LEND_OUT    −           no                   no                 yes
+///   COLLECT     +           no                   no                 yes
+///   BORROW_IN   +           no                   no                 yes
+///   REPAY       −           no                   no                 yes
+///
+/// Cash on hand sums every kind. Budgets and category analytics read SPEND only, so lending a
+/// large sum no longer detonates a budget — a transfer is not an expense.
+enum TransactionKind {
+  SPEND
+  EARN
+  LEND_OUT
+  COLLECT
+  BORROW_IN
+  REPAY
+}
+
+model Transaction {
+  id     String          @id @default(uuid())
+  userId String
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind   TransactionKind
+
+  // Never Float. Double precision accumulated error across partial settlements.
+  amount Decimal  @db.Decimal(14, 2)
+  date   DateTime
+  // "YYYY-MM", derived in the user's timezone. Denormalized for fast month filtering.
+  month  String
+
+  description   String?
+  paymentMethod String  @default("Cash")
+
+  // SPEND only.
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+  needWant   String? // "Need" | "Want"
+
+  // EARN only.
+  source      String?
+  sourceIcon  String?
+  sourceColor String?
+
+  // Set for LEND_OUT / COLLECT / BORROW_IN / REPAY. Cascades so deleting a loan removes its
+  // movements, rather than leaving orphaned cashflow behind as the old auto-created rows did.
+  loanId String?
+  loan   Loan?   @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, month, kind])
+  // Keyset pagination. Day-level dates make ties the norm, so ordering by date alone made
+  // offset paging silently duplicate and drop rows.
+  @@index([userId, date, id])
+  @@index([userId, categoryId])
+  @@index([loanId])
+  @@map("transactions")
 }
 
