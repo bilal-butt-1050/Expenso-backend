@@ -33,24 +33,53 @@ jobs:
             echo "==> Building backend service..."
             docker compose build api
 
+            echo "==> Starting database..."
+            docker compose up -d db
+
+            echo "==> Waiting for database to accept connections..."
+            for i in $(seq 1 30); do
+              if docker compose exec -T db pg_isready -q; then break; fi
+              sleep 2
+            done
+            docker compose exec -T db pg_isready
+
             # ---------------------------------------------------------------
             # Back up BEFORE touching the schema.
             #
-            # Migrations are forward-only and some are irreversible, so the
+            # Migrations are forward-only and some are irreversible, so this
             # dump is the rollback path. If it fails, the deploy stops here
             # rather than migrating an unprotected database.
+            #
+            # The dump runs *inside* the db container, over its local socket.
+            # Two reasons not to hand pg_dump the connection URL:
+            #   1. Prisma URLs carry non-libpq parameters — `?schema=public`
+            #      makes pg_dump exit with "invalid URI query parameter",
+            #      which is exactly what broke the previous deploy.
+            #   2. A bare `docker run` container is not on the compose
+            #      network, so it could resolve neither the `db` hostname nor
+            #      a loopback-bound port on the host.
+            # Inside the container both problems vanish: POSTGRES_USER and
+            # POSTGRES_DB are already set, and the local socket needs no
+            # credentials.
             # ---------------------------------------------------------------
             echo "==> Backing up database..."
             mkdir -p backups
-            set -a; . ./.env; set +a
             STAMP=$(date -u +%Y%m%d-%H%M%S)
             DUMP="backups/pre-migrate-$STAMP.sql"
 
-            docker run --rm -e PGCONNECT_TIMEOUT=20 postgres:16-alpine \
-              pg_dump --no-owner --no-privileges "$DIRECT_URL" > "$DUMP"
+            docker compose exec -T db sh -c \
+              'pg_dump --no-owner --no-privileges -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$DUMP"
 
             if [ ! -s "$DUMP" ]; then
               echo "FATAL: backup is empty — refusing to migrate." >&2
+              rm -f "$DUMP"
+              exit 1
+            fi
+
+            # A dump that died midway can still be non-empty, so require the
+            # terminator pg_dump writes only after a clean run.
+            if ! tail -5 "$DUMP" | grep -q "PostgreSQL database dump complete"; then
+              echo "FATAL: backup is truncated — refusing to migrate." >&2
               rm -f "$DUMP"
               exit 1
             fi

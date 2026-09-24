@@ -6,16 +6,45 @@ Express · Prisma · PostgreSQL · TypeScript.
 Paired with the `Expenso-mobile` repo. They are separate repos and must stay API-compatible;
 a breaking change needs both sides shipped together.
 
+## Environments
+
+Database config is **per environment**, via the `.env` sitting next to the code. Same repo, same
+`docker-compose.yml`, different target:
+
+| | Database | Configured by |
+|---|---|---|
+| Local dev | Your own PostgreSQL install (pgAdmin), `expenso_dev` | `backend/.env` on your machine |
+| Production | Postgres on the VPS — the `db` service in `docker-compose.yml` | `.env` on the VPS |
+
+The point is that a migration can be proven locally before it ever reaches production.
+
 ## Run it
 
 ```bash
-cp .env.example .env     # DATABASE_URL, JWT_SECRET at minimum
+cp .env.example .env     # then set DATABASE_URL / DIRECT_URL and JWT_SECRET
 npm install
-npm run prisma:generate
-npm run prisma:migrate   # dev migrations
+npm run db:create        # one-off: creates expenso_dev
+npm run prisma:migrate   # apply migrations locally
 npm run dev              # tsx watch
 npm run typecheck        # tsc --noEmit — must be 0 errors before any commit
 ```
+
+### Changing the schema
+
+```bash
+npm run migrate:new -- --name what_changed   # writes the SQL, applies nothing
+# review and hand-edit prisma/migrations/<stamp>_what_changed/migration.sql
+npm run prisma:migrate                       # apply locally
+npm run db:status                            # confirm
+```
+
+Backfills and data corrections belong in the migration SQL, written by hand. Before a migration
+touches a database with real data in it, dry-run it inside `BEGIN … ROLLBACK` with psql — Postgres
+DDL is transactional, so that exercises the real schema against real rows with nothing persisted.
+
+`prisma db push` is deliberately **not** available as a script. It diffs the live schema and
+silently mutates to match, which bypasses migration history — production was found carrying an
+index no migration ever created.
 
 ## Layout
 
