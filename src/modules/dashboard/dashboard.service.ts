@@ -1,6 +1,6 @@
 import { Prisma, TransactionKind } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
-import { trailingMonths } from "../../utils/date";
+import { DEFAULT_TIMEZONE, monthKeyInZone, trailingMonths } from "../../utils/date";
 import { cache } from "../../lib/cache";
 import { CASH_SIGN } from "../transactions/transactions.service";
 import { clampPositive, money, subtract, toNumber } from "../../utils/money";
@@ -28,7 +28,13 @@ export async function getDashboardSummary(userId: string, month: string) {
 
   const prevMonth = getPreviousMonth(month);
 
-  const [monthRows, prevMonthRows, allTimeRows, budgets, prevMonthBudgets, categories, loans] =
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { timezone: true },
+  });
+  const timezone = user?.timezone ?? DEFAULT_TIMEZONE;
+
+  const [monthRows, prevMonthRows, toDateRows, toPrevMonthRows, budgets, prevMonthBudgets, categories, allLoans, settlementRows] =
     await Promise.all([
       prisma.transaction.findMany({
         where: { userId, month },
@@ -38,15 +44,29 @@ export async function getDashboardSummary(userId: string, month: string) {
         where: { userId, month: prevMonth, kind: "SPEND" },
         select: { kind: true, amount: true, categoryId: true, needWant: true },
       }),
+      // Everything up to and including the selected month — the closing position.
       prisma.transaction.groupBy({
         by: ["kind"],
         where: { userId, month: { lte: month } },
+        _sum: { amount: true },
+      }),
+      // Everything up to the *previous* month — the opening position. Having both is what makes
+      // month-over-month continuity expressible, and checkable.
+      prisma.transaction.groupBy({
+        by: ["kind"],
+        where: { userId, month: { lt: month } },
         _sum: { amount: true },
       }),
       prisma.budget.findMany({ where: { userId, month }, include: { category: true } }),
       prisma.budget.findMany({ where: { userId, month: prevMonth } }),
       prisma.category.findMany({ where: { userId } }),
       prisma.loan.findMany({ where: { userId } }),
+      // Settlement movements, so a loan's outstanding balance can be reconstructed *as of* a past
+      // month rather than read from its present-day settledAmount.
+      prisma.transaction.findMany({
+        where: { userId, loanId: { not: null }, kind: { in: ["COLLECT", "REPAY"] } },
+        select: { loanId: true, amount: true, month: true },
+      }),
     ]);
 
   const monthlyIncome = sum(ofKind(monthRows, "EARN"));
@@ -58,23 +78,56 @@ export async function getDashboardSummary(userId: string, month: string) {
     money(0)
   );
 
-  // Cash accumulated to the end of the selected month.
-  const cashOnHand = allTimeRows.reduce(
-    (total, r) => total.add((r._sum.amount ?? money(0)).mul(CASH_SIGN[r.kind])),
-    money(0)
-  );
+  const cashFrom = (rows: { kind: TransactionKind; _sum: { amount: Prisma.Decimal | null } }[]) =>
+    rows.reduce((total, r) => total.add((r._sum.amount ?? money(0)).mul(CASH_SIGN[r.kind])), money(0));
 
-  let totalLentOutstanding = money(0);
-  let totalBorrowedOutstanding = money(0);
-  for (const loan of loans) {
-    if (loan.status === "SETTLED") continue;
-    const remaining = clampPositive(subtract(loan.amount, loan.settledAmount));
-    if (loan.type === "LENT") totalLentOutstanding = totalLentOutstanding.add(remaining);
-    else totalBorrowedOutstanding = totalBorrowedOutstanding.add(remaining);
+  const closingCash = cashFrom(toDateRows);
+  const openingCash = cashFrom(toPrevMonthRows);
+
+  /**
+   * Outstanding debt **as of the end of the selected month**.
+   *
+   * This used to read every loan's present-day `settledAmount`, regardless of when the loan was
+   * opened — so viewing August added a loan created in September to August's net worth. The two
+   * halves of the balance sheet were measured at different instants.
+   *
+   * A loan counts once it was opened on or before the period, and its outstanding balance is the
+   * principal less the settlements recorded by then. Deriving it this way also handles a loan
+   * created with `recordCashflow: false`: it has no opening cash movement but is still a real
+   * obligation.
+   */
+  function debtPositionAsOf(periodMonth: string) {
+    const settledByLoan = new Map<string, Prisma.Decimal>();
+    for (const s of settlementRows) {
+      if (!s.loanId || s.month > periodMonth) continue;
+      settledByLoan.set(s.loanId, (settledByLoan.get(s.loanId) ?? money(0)).add(s.amount));
+    }
+
+    let lent = money(0);
+    let borrowed = money(0);
+    for (const loan of allLoans) {
+      if (monthKeyInZone(loan.createdAt, timezone) > periodMonth) continue; // not yet opened
+      const outstanding = clampPositive(
+        subtract(loan.amount, settledByLoan.get(loan.id) ?? money(0))
+      );
+      if (loan.type === "LENT") lent = lent.add(outstanding);
+      else borrowed = borrowed.add(outstanding);
+    }
+    return { lent, borrowed };
   }
 
-  // What you'd actually be worth: cash, plus what's owed to you, minus what you owe.
-  const netWorth = cashOnHand.add(totalLentOutstanding).sub(totalBorrowedOutstanding);
+  const closingDebt = debtPositionAsOf(month);
+  const openingDebt = debtPositionAsOf(prevMonth);
+
+  const totalLentOutstanding = closingDebt.lent;
+  const totalBorrowedOutstanding = closingDebt.borrowed;
+
+  // Balance sheet, all measured at the same instant: what you'd be worth at the end of this month.
+  const closingNetWorth = closingCash.add(closingDebt.lent).sub(closingDebt.borrowed);
+  const openingNetWorth = openingCash.add(openingDebt.lent).sub(openingDebt.borrowed);
+
+  // Income-statement figure for the period. Signed — an overspent month must read negative.
+  const savingsThisMonth = subtract(monthlyIncome, totalExpenses);
 
   // --- month pacing ---------------------------------------------------------------------
   const [yearStr, monthStr] = month.split("-");
@@ -101,10 +154,9 @@ export async function getDashboardSummary(userId: string, month: string) {
 
   // Unspent money for the rest of the month. Deliberately *not* floored at zero elsewhere —
   // a negative month must stay visible — but a daily allowance below zero is meaningless.
-  const remainingBalance = subtract(monthlyIncome, totalExpenses);
   const dailyAllowance =
-    daysRemaining > 0 && remainingBalance.greaterThan(0)
-      ? Math.round(toNumber(remainingBalance) / daysRemaining)
+    daysRemaining > 0 && savingsThisMonth.greaterThan(0)
+      ? Math.round(toNumber(savingsThisMonth) / daysRemaining)
       : 0;
 
   const needsTotal = sum(ofKind(monthRows, "SPEND").filter((r) => r.needWant === "Need"));
@@ -174,7 +226,16 @@ export async function getDashboardSummary(userId: string, month: string) {
   );
 
   // --- obligations ----------------------------------------------------------------------
-  const upcomingObligations = loans
+  // Deliberately a live, forward-looking list rather than an as-of-date one: "what is coming up"
+  // only means anything relative to now, so it reads today's settledAmount and today's clock.
+  //
+  // A loan due *today* is not overdue. Comparing against the raw instant marked anything due
+  // today as already late from one minute past midnight, so the boundary is the start of today:
+  // overdue means the due date has actually passed.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
+  const upcomingObligations = allLoans
     .filter((l) => l.status !== "SETTLED" && l.dueDate)
     .sort((a, b) => a.dueDate!.getTime() - b.dueDate!.getTime())
     .slice(0, 5)
@@ -184,22 +245,32 @@ export async function getDashboardSummary(userId: string, month: string) {
       personName: l.personName,
       remainingAmount: toNumber(clampPositive(subtract(l.amount, l.settledAmount))),
       dueDate: l.dueDate!.toISOString(),
-      isOverdue: l.dueDate!.getTime() < Date.now(),
+      isOverdue: l.dueDate!.getTime() < startOfToday.getTime(),
     }));
 
   const result = {
     month,
 
-    // Cash and worth
-    cashOnHand: toNumber(cashOnHand),
-    netWorth: toNumber(netWorth),
+    // --- Balance sheet: measured at the END of this month ---------------------------------
+    cashOnHand: toNumber(closingCash),
+    netWorth: toNumber(closingNetWorth),
+
+    // Opening position, i.e. the close of the previous month. `openingCash + netCashThisMonth`
+    // must equal `cashOnHand`, which is what makes month-over-month continuity checkable.
+    openingCash: toNumber(openingCash),
+    closingCash: toNumber(closingCash),
+    openingNetWorth: toNumber(openingNetWorth),
+    closingNetWorth: toNumber(closingNetWorth),
+
     netCashThisMonth: toNumber(netCashThisMonth),
 
     // This month
     monthlyIncome: toNumber(monthlyIncome),
     totalExpenses: toNumber(totalExpenses),
-    // Signed on purpose: an overspent month must read negative, not be clamped to zero.
-    remainingBalance: toNumber(remainingBalance),
+    // Income statement for the period. Signed on purpose: an overspent month must read negative.
+    savingsThisMonth: toNumber(savingsThisMonth),
+    /** @deprecated superseded by `savingsThisMonth`; retained for installed clients. */
+    remainingBalance: toNumber(savingsThisMonth),
     plannedSavings: toNumber(plannedSavings),
     rolloverSavings: toNumber(rolloverSavings),
     totalBudgeted: toNumber(totalBudgeted),
