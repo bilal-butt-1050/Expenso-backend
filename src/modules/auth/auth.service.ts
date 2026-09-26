@@ -124,7 +124,11 @@ function googleIsAuthoritative(email: string, hostedDomain: string | undefined):
  * - an account that never proved it owns its email loses its password (and every other session)
  *   the moment Google proves ownership.
  */
-export async function loginWithGoogle(idToken: string) {
+/**
+ * Verifies a Google ID token against our client ids and returns its claims. Throws 503 when Google
+ * sign-in isn't configured or Google's keys can't be fetched, and 401 for any bad token.
+ */
+async function verifyGoogleIdToken(idToken: string) {
   const audience = [
     env.googleClientIdWeb || "",
     env.googleClientIdIos || "",
@@ -151,7 +155,15 @@ export async function loginWithGoogle(idToken: string) {
   }
 
   const payload = ticket.getPayload();
-  if (!payload || !payload.email || !payload.sub) {
+  if (!payload || !payload.sub) {
+    throw new AppError(401, "Invalid Google token");
+  }
+  return payload;
+}
+
+export async function loginWithGoogle(idToken: string) {
+  const payload = await verifyGoogleIdToken(idToken);
+  if (!payload.email) {
     throw new AppError(401, "Invalid Google token");
   }
 
@@ -253,18 +265,35 @@ export async function updateUserProfile(
   return toPublicUser(user);
 }
 
+/** How recently a Google ID token must have been issued to prove the user is present. */
+const GOOGLE_PROOF_MAX_AGE_MS = 10 * 60 * 1000;
+
+/**
+ * Changes the password, or sets the first one on a Google-only account.
+ *
+ * Changing needs the current password. Setting the first one needs fresh proof from Google (threat
+ * model M4): an ID token for this account's Google id, issued in the last few minutes. Without it,
+ * a stolen session alone could add a password and keep the account after that session ends.
+ *
+ * Returns a new session token: the change ends every other session, including the one that asked.
+ */
 export async function changePassword(
   userId: string,
   tokenVersion: number,
   currentPassword?: string,
-  newPassword?: string
+  newPassword?: string,
+  googleIdToken?: string
 ) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
     throw new AppError(404, "User not found");
   }
+  // A session ended by a Google reclaim or an earlier change gets no further (the conditional write
+  // below catches the same thing racing this request).
+  if (user.tokenVersion !== tokenVersion) {
+    throw new AppError(401, "Session has expired, please sign in again");
+  }
 
-  // If user signed up with Google, they might not have a password hash
   if (user.passwordHash) {
     if (!currentPassword) {
       throw new AppError(400, "Current password is required");
@@ -272,6 +301,26 @@ export async function changePassword(
     const isValid = await comparePassword(currentPassword, user.passwordHash);
     if (!isValid) {
       throw new AppError(400, "Incorrect current password");
+    }
+  } else {
+    if (!user.googleId) {
+      throw new AppError(400, "This account can't set a password");
+    }
+    if (!googleIdToken) {
+      throw new AppError(400, "Confirm with Google to set a password");
+    }
+    // A bad token here is a 400, never a 401: the app ends the session on any 401.
+    const payload = await verifyGoogleIdToken(googleIdToken).catch((error) => {
+      if (error instanceof AppError && error.statusCode === 401) {
+        throw new AppError(400, "Google couldn't confirm it's you. Please try again.");
+      }
+      throw error;
+    });
+    if (payload.sub !== user.googleId) {
+      throw new AppError(403, "That Google account isn't the one linked to this account");
+    }
+    if (!payload.iat || Date.now() - payload.iat * 1000 > GOOGLE_PROOF_MAX_AGE_MS) {
+      throw new AppError(400, "Google confirmation expired. Please try again.");
     }
   }
 
@@ -295,6 +344,7 @@ export async function changePassword(
     throw new AppError(401, "Session has expired, please sign in again");
   }
   invalidateTokenVersionCache(userId);
+  return { token: signToken({ userId, tv: tokenVersion + 1 }) };
 }
 
 // Never leak the password hash back to a client.
@@ -306,6 +356,8 @@ function toPublicUser(user: {
   timezone?: string;
   avatarUrl?: string | null;
   createdAt?: Date;
+  // Required, so every caller passes the full row: a missing field would read as "no password".
+  passwordHash: string | null;
 }) {
   return {
     id: user.id,
@@ -317,5 +369,7 @@ function toPublicUser(user: {
     // Lets the app tell a new account from an existing one on a new device (e.g. whether to show
     // the first-run tour). Additive: older app builds ignore it.
     createdAt: user.createdAt?.toISOString() ?? null,
+    // Whether Settings offers "Change password" (needs the current one) or "Set a password".
+    hasPassword: user.passwordHash !== null,
   };
 }
