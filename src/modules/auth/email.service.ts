@@ -45,7 +45,9 @@ function otpEmailHtml(otp: string): string {
  * recipient or the code.
  */
 function mapBrevoFailure(status: number | null, code: string, message: string): AppError {
-  console.error(`[email] brevo ${status ?? "network"} ${code}: ${message.slice(0, 200)}`);
+  // Brevo's message isn't known to echo the recipient, but never risk logging an address.
+  const safe = message.replace(/\S+@\S+/g, "<email>").slice(0, 200);
+  console.error(`[email] brevo ${status ?? "network"} ${code}: ${safe}`);
 
   // Bad key, an IP Brevo hasn't authorised, or the account isn't allowed to send yet.
   if (status === 401 || status === 403) {

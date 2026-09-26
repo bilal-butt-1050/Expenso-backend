@@ -35,6 +35,10 @@ function requireJwtSecret(): string {
   return secret;
 }
 
+if (!process.env.BREVO_API_KEY || !process.env.MAIL_FROM_EMAIL) {
+  console.warn("[env] BREVO_API_KEY or MAIL_FROM_EMAIL is not set: signup codes can't be emailed");
+}
+
 export const env = {
   nodeEnv,
   port: Number(process.env.PORT ?? 4000),

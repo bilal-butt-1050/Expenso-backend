@@ -30,7 +30,7 @@ const DAY = 24 * HOUR;
  * `timestamptz` would be converted through the session's time zone, which is PKT on a local
  * Windows install. So every raw-SQL comparison binds the UTC wall-clock time as text and casts it.
  */
-const utc = (date: Date) => Prisma.sql`${date.toISOString().replace("Z", "")}::timestamp`;
+export const utc = (date: Date) => Prisma.sql`${date.toISOString().replace("Z", "")}::timestamp`;
 
 /** HMAC-SHA256 of email + code, keyed from JWT_SECRET, so a database read can't reveal a live code. */
 function hashOtp(email: string, otp: string): string {
@@ -82,7 +82,7 @@ export async function generateAndSendOtp(email: string, ip: string): Promise<voi
     await tx.otpSendLog.create({ data: { email, ip, createdAt: now } });
     const code = { otpHash: hashOtp(email, otp), attempts: 0, expiresAt: new Date(now.getTime() + OTP_TTL_MS) };
     await tx.otpVerification.upsert({ where: { email }, create: { email, ...code }, update: code });
-  });
+  }, { timeout: 10_000 });
 
   await sendOtpEmail(email, otp);
 }
@@ -110,7 +110,8 @@ export async function consumeOtp(email: string, otp: string): Promise<void> {
       throw new AppError(400, "Request a verification code first");
     }
     if (pending.expiresAt.getTime() <= now.getTime()) {
-      await prisma.otpVerification.deleteMany({ where: { email } });
+      // Only this expired code: a resend racing this request may have just stored a fresh one.
+      await prisma.otpVerification.deleteMany({ where: { email, otpHash: pending.otpHash } });
       throw new AppError(400, "Verification code has expired. Request a new one.");
     }
     throw new AppError(429, "Too many incorrect codes. Request a new one.");

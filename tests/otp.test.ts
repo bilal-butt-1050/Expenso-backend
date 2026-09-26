@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { prisma } from "../src/lib/prisma";
 import { env } from "../src/config/env";
-import { generateAndSendOtp, consumeOtp } from "../src/modules/auth/otp.service";
+import { Prisma } from "@prisma/client";
+import { generateAndSendOtp, consumeOtp, utc } from "../src/modules/auth/otp.service";
 import { registerUser } from "../src/modules/auth/auth.service";
 
 /**
@@ -177,13 +178,22 @@ describe("AUT: verifying codes", () => {
     expect(await prisma.otpVerification.count({ where: { email: EMAIL } })).toBe(0);
   });
 
-  it("a code still inside its 10 minutes is accepted whatever the database session time zone", async () => {
-    // The column has no time zone. A comparison against now() would shift by the session's offset.
-    await prisma.$executeRawUnsafe(`SET TIME ZONE 'Asia/Karachi'`);
-    const code = await sendAndReadCode();
-    await prisma.otpVerification.update({ where: { email: EMAIL }, data: { expiresAt: new Date(Date.now() + 60_000) } });
-    await expect(consumeOtp(EMAIL, code)).resolves.toBeUndefined();
-    await prisma.$executeRawUnsafe(`SET TIME ZONE 'UTC'`);
+  it("expiry is compared in UTC whatever the database session's time zone", async () => {
+    // One transaction = one connection, so SET LOCAL really applies to the queries below.
+    const expiresAt = new Date(Date.now() + 60_000);
+    const [viaUtc, viaNow] = await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL TIME ZONE 'Asia/Karachi'`);
+      const a = await tx.$queryRaw<{ ok: boolean }[]>(
+        Prisma.sql`SELECT ${utc(expiresAt)} > ${utc(new Date())} AS ok`
+      );
+      // What a naive comparison against now() would do: in +05 it's five hours ahead.
+      const b = await tx.$queryRaw<{ ok: boolean }[]>(
+        Prisma.sql`SELECT ${utc(expiresAt)} > now()::timestamp AS ok`
+      );
+      return [a[0].ok, b[0].ok];
+    });
+    expect(viaUtc).toBe(true);
+    expect(viaNow).toBe(false);
   });
 
   it("AUT-005: five wrong codes burn it; even the right code then fails", async () => {
@@ -253,6 +263,22 @@ describe("AUT: send caps", () => {
     });
     expect(await statusOf(generateAndSendOtp(EMAIL, IP))).toBe(503);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("concurrent sends to one email: exactly one goes out (the advisory lock)", async () => {
+    const statuses = await Promise.all(Array.from({ length: 10 }, () => statusOf(generateAndSendOtp(EMAIL, IP))));
+    expect(statuses.filter((st) => st === 200)).toHaveLength(1);
+    expect(statuses.filter((st) => st === 429)).toHaveLength(9);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(await prisma.otpSendLog.count()).toBe(1);
+  });
+
+  it("concurrent sends from one IP never exceed the per-IP cap", async () => {
+    const statuses = await Promise.all(
+      Array.from({ length: 8 }, (_, i) => statusOf(generateAndSendOtp(`burst${i}@example.com`, IP)))
+    );
+    expect(statuses.filter((st) => st === 200)).toHaveLength(5);
+    expect(await prisma.otpSendLog.count({ where: { ip: IP } })).toBe(5);
   });
 
   it("a failed send still counts toward the caps", async () => {
