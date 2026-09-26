@@ -1,9 +1,20 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 import { invalidateUserDashboard } from "../../lib/cache";
+import { toNumber } from "../../utils/money";
 
-export function listBudgets(userId: string, month: string) {
-  return prisma.budget.findMany({ where: { userId, month }, include: { category: true } });
+/**
+ * Prisma's Decimal serializes to a JSON string, but the app reads `amount` as a number (as every
+ * other endpoint returns it). Found by the API contract test CON-001.
+ */
+function serializeBudget<T extends { amount: Prisma.Decimal }>(budget: T) {
+  return { ...budget, amount: toNumber(budget.amount) };
+}
+
+export async function listBudgets(userId: string, month: string) {
+  const budgets = await prisma.budget.findMany({ where: { userId, month }, include: { category: true } });
+  return budgets.map(serializeBudget);
 }
 
 export async function upsertBudget(userId: string, categoryId: string, amount: number, month: string) {
@@ -19,7 +30,7 @@ export async function upsertBudget(userId: string, categoryId: string, amount: n
     include: { category: true },
   });
   invalidateUserDashboard(userId);
-  return result;
+  return serializeBudget(result);
 }
 
 export async function deleteBudget(userId: string, categoryId: string, month: string) {
