@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { amountSchema } from "../../utils/validation";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
 import {
@@ -18,7 +19,7 @@ loansRouter.use(requireAuth);
 const createLoanSchema = z.object({
   type: z.enum(["LENT", "BORROWED"]),
   personName: z.string().trim().min(1, "Person or institution name is required"),
-  amount: z.number().positive("Amount must be greater than 0"),
+  amount: amountSchema(),
   dueDate: z.string().datetime().optional().nullable(),
   notes: z.string().trim().max(500).optional().nullable(),
   /** False records a debt that predates the app without fabricating a cash movement today. */
@@ -26,14 +27,14 @@ const createLoanSchema = z.object({
 });
 
 const settleLoanSchema = z.object({
-  paymentAmount: z.number().positive("Payment amount must be greater than 0").optional(),
+  paymentAmount: amountSchema("Payment amount must be greater than 0").optional(),
   /** When the payment actually happened. Defaults to now. */
   date: z.coerce.date().optional(),
 });
 
 const updateLoanSchema = z.object({
   personName: z.string().trim().min(1).optional(),
-  amount: z.number().positive().optional(),
+  amount: amountSchema().optional(),
   dueDate: z.string().datetime().optional().nullable(),
   notes: z.string().trim().max(500).optional().nullable(),
 });

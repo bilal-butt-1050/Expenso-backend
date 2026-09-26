@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { amountSchema } from "../../utils/validation";
 import { TransactionKind } from "@prisma/client";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
@@ -34,7 +35,7 @@ export const createSchema = z.object({
     .transform((v) => v.toLowerCase())
     .optional(),
   kind: z.enum(["SPEND", "EARN"]),
-  amount: z.number().positive(),
+  amount: amountSchema(),
   date: z.coerce.date(),
   description: z.string().max(200).optional(),
   paymentMethod: z.string().max(50).optional(),

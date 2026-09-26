@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { nonNegativeAmountSchema } from "../../utils/validation";
 import { asyncHandler, AppError } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
 import { isValidMonthKey } from "../../utils/date";
@@ -10,7 +11,7 @@ budgetsRouter.use(requireAuth);
 
 const budgetSchema = z.object({
   categoryId: z.string().uuid(),
-  amount: z.number().min(0),
+  amount: nonNegativeAmountSchema,
   month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "month must be in YYYY-MM format"),
 });
 

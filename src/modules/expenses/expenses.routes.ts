@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { amountSchema } from "../../utils/validation";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
 import {
@@ -17,7 +18,7 @@ const expenseSchema = z.object({
   categoryId: z.string().uuid(),
   date: z.coerce.date(),
   description: z.string().max(200).optional(),
-  amount: z.number().positive(),
+  amount: amountSchema(),
   paymentMethod: z.enum(["Cash", "Bank Transfer", "Card", "Cheque"]).optional(),
   needWant: z.enum(["Need", "Want"]).optional(),
   status: z.enum(["Paid"]).optional(),

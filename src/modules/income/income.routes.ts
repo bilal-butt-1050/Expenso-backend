@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { amountSchema } from "../../utils/validation";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
 import {
@@ -20,7 +21,7 @@ const incomeSchema = z.object({
   sourceIcon: z.string().max(50).optional(),
   sourceColor: z.string().max(20).optional(),
   description: z.string().max(200).optional(),
-  amount: z.number().positive(),
+  amount: amountSchema(),
   paymentMethod: z.string().max(50).optional(),
 });
 
