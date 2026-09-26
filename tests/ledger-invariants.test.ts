@@ -9,7 +9,7 @@ import {
   updateTransaction,
   CASH_SIGN,
 } from "../src/modules/transactions/transactions.service";
-import { makeUser, categoryFor, earn, dateOf } from "./helpers/factories";
+import { makeUser, categoryFor, earn, dateOf, currentMonth } from "./helpers/factories";
 
 /**
  * LEDGER — the invariants that make the numbers trustworthy (P0).
@@ -126,25 +126,57 @@ describe("LEDGER — money invariants", () => {
     expect(fresh.status).toBe("SETTLED");
   });
 
-  it("LED-011/012/014/015: invalid and excessive settlements are refused", async () => {
+  const statusOf = (p: Promise<unknown>) => p.then(() => 200, (e: { statusCode?: number }) => e.statusCode);
+
+  it("LED-011: an amount of zero is refused, for a loan and for a settlement, and nothing is written", async () => {
     const user = await makeUser();
-    await expect(
-      createLoan(user.id, { type: "LENT", personName: "E", amount: 0 })
-    ).rejects.toThrow();
-    await expect(
-      createLoan(user.id, { type: "LENT", personName: "E", amount: -5 })
-    ).rejects.toThrow();
+    expect(await statusOf(createLoan(user.id, { type: "LENT", personName: "E", amount: 0 }))).toBe(400);
 
     const loan = await createLoan(user.id, { type: "LENT", personName: "E", amount: 100 });
-    await expect(settleLoan(user.id, loan.id, -1)).rejects.toThrow();
-    await expect(settleLoan(user.id, loan.id, 0)).rejects.toThrow();
+    expect(await statusOf(settleLoan(user.id, loan.id, 0))).toBe(400);
 
-    // Overpaying clamps to what is actually outstanding rather than over-settling.
+    expect(await prisma.loan.count({ where: { userId: user.id } })).toBe(1);
+    expect(await prisma.transaction.count({ where: { loanId: loan.id, kind: "COLLECT" } })).toBe(0);
+  });
+
+  it("LED-012: a negative amount is refused, for a loan and for a settlement, and nothing is written", async () => {
+    const user = await makeUser();
+    expect(await statusOf(createLoan(user.id, { type: "LENT", personName: "E", amount: -5 }))).toBe(400);
+
+    const loan = await createLoan(user.id, { type: "LENT", personName: "E", amount: 100 });
+    expect(await statusOf(settleLoan(user.id, loan.id, -1))).toBe(400);
+
+    expect(await prisma.loan.count({ where: { userId: user.id } })).toBe(1);
+    expect(await prisma.transaction.count({ where: { loanId: loan.id, kind: "COLLECT" } })).toBe(0);
+  });
+
+  it("LED-014: settling more than what's left clamps to what's left", async () => {
+    const user = await makeUser();
+    const loan = await createLoan(user.id, { type: "LENT", personName: "E", amount: 100 });
+    await settleLoan(user.id, loan.id, 30);
+
     await settleLoan(user.id, loan.id, 500);
+
     const fresh = await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } });
     expect(fresh.settledAmount.toNumber()).toBe(100);
+    expect(fresh.status).toBe("SETTLED");
+    const collected = (await prisma.transaction.findMany({ where: { loanId: loan.id, kind: "COLLECT" } }))
+      .map((t) => t.amount.toNumber())
+      .sort((a, b) => a - b);
+    expect(collected, "the second movement is the clamped amount, not the requested one").toEqual([30, 70]);
+  });
 
-    await expect(settleLoan(user.id, loan.id)).rejects.toThrow(/already fully settled/i);
+  it("LED-015: settling an already settled loan is a 400 and writes nothing", async () => {
+    const user = await makeUser();
+    const loan = await createLoan(user.id, { type: "LENT", personName: "E", amount: 100 });
+    await settleLoan(user.id, loan.id);
+    const movements = await prisma.transaction.count({ where: { loanId: loan.id } });
+
+    const err = await settleLoan(user.id, loan.id).catch((e) => e);
+
+    expect(err.statusCode).toBe(400);
+    expect(err.message).toMatch(/already fully settled/i);
+    expect(await prisma.transaction.count({ where: { loanId: loan.id } })).toBe(movements);
   });
 
   it("LED-019: deleting a loan removes its movements and restores cash", async () => {
@@ -161,63 +193,97 @@ describe("LEDGER — money invariants", () => {
     expect(orphans, "movements must cascade with the loan").toBe(0);
   });
 
-  it("LED-020/021: loan-linked rows cannot be edited or deleted directly", async () => {
+  it("LED-020: deleting a loan-linked transaction directly is a 409, and nothing changes", async () => {
     const user = await makeUser();
-    await earn(user.id, 20_000, dateOf("2026-04-01"));
     const loan = await createLoan(user.id, { type: "BORROWED", personName: "G", amount: 4_000 });
-
     const movement = await prisma.transaction.findFirstOrThrow({ where: { loanId: loan.id } });
 
-    await expect(deleteTransaction(user.id, movement.id)).rejects.toThrow(/belongs to a loan/i);
-    await expect(
-      updateTransaction(user.id, movement.id, { amount: 1 })
-    ).rejects.toThrow(/belongs to a loan/i);
+    const err = await deleteTransaction(user.id, movement.id).catch((e) => e);
+
+    expect(err.statusCode).toBe(409);
+    expect(err.message).toMatch(/belongs to a loan/i);
+    expect(await prisma.transaction.count({ where: { id: movement.id } })).toBe(1);
   });
 
-  it("LED-022/023: principal cannot drop below what is settled, and tracks its movement", async () => {
+  it("LED-021: editing a loan-linked transaction directly is a 409, and nothing changes", async () => {
     const user = await makeUser();
-    await earn(user.id, 20_000, dateOf("2026-04-01"));
+    const loan = await createLoan(user.id, { type: "BORROWED", personName: "G", amount: 4_000 });
+    const movement = await prisma.transaction.findFirstOrThrow({ where: { loanId: loan.id } });
+
+    const err = await updateTransaction(user.id, movement.id, { amount: 1 }).catch((e) => e);
+
+    expect(err.statusCode).toBe(409);
+    expect(err.message).toMatch(/belongs to a loan/i);
+    expect((await prisma.transaction.findUniqueOrThrow({ where: { id: movement.id } })).amount.toNumber()).toBe(4_000);
+  });
+
+  it("LED-022: principal can't drop below what's already settled", async () => {
+    const user = await makeUser();
     const loan = await createLoan(user.id, { type: "LENT", personName: "H", amount: 5_000 });
     await settleLoan(user.id, loan.id, 3_000);
 
-    await expect(updateLoan(user.id, loan.id, { amount: 1_000 })).rejects.toThrow(
-      /cannot be less than/i
-    );
+    const err = await updateLoan(user.id, loan.id, { amount: 1_000 }).catch((e) => e);
+
+    expect(err.statusCode).toBe(400);
+    expect(err.message).toMatch(/cannot be less than/i);
+    expect((await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } })).amount.toNumber()).toBe(5_000);
+  });
+
+  it("LED-023: editing the principal moves the opening movement with it", async () => {
+    const user = await makeUser();
+    const loan = await createLoan(user.id, { type: "LENT", personName: "H", amount: 5_000 });
+    await settleLoan(user.id, loan.id, 3_000);
 
     await updateLoan(user.id, loan.id, { amount: 8_000 });
-    const opening = await prisma.transaction.findFirstOrThrow({
-      where: { loanId: loan.id, kind: "LEND_OUT" },
-    });
+
+    const opening = await prisma.transaction.findFirstOrThrow({ where: { loanId: loan.id, kind: "LEND_OUT" } });
     expect(opening.amount.toNumber(), "opening movement must follow the principal").toBe(8_000);
   });
 
-  it("LED-025/026: settling a debt never consumes a category budget", async () => {
+  it("LED-025: budgets, the category breakdown and needs/wants ignore all four loan kinds", async () => {
+    const user = await makeUser();
+    const food = await categoryFor(user.id, "Food");
+    // Loans and their movements are stamped "now", so everything happens in the current month.
+    const month = currentMonth();
+    await prisma.budget.create({ data: { userId: user.id, categoryId: food.id, amount: new Prisma.Decimal(5_000), month: month.key } });
+    await earn(user.id, 60_000, month.day(1));
+    await createTransaction(user.id, { kind: "SPEND", amount: 1_200, date: month.day(1), categoryId: food.id, needWant: "Need" });
+
+    const lent = await createLoan(user.id, { type: "LENT", personName: "Out", amount: 9_000 });
+    await settleLoan(user.id, lent.id, 4_000);
+    const owed = await createLoan(user.id, { type: "BORROWED", personName: "In", amount: 7_000 });
+    await settleLoan(user.id, owed.id, 3_000);
+    const kinds = await prisma.transaction.findMany({
+      where: { userId: user.id, month: month.key },
+      distinct: ["kind"],
+      select: { kind: true },
+    });
+    expect(kinds.map((k) => k.kind).sort()).toEqual(["BORROW_IN", "COLLECT", "EARN", "LEND_OUT", "REPAY", "SPEND"]);
+
+    const d = await getDashboardSummary(user.id, month.key);
+
+    expect(d.totalExpenses).toBe(1_200);
+    expect(d.budgetVsActual.find((b) => b.categoryId === food.id)?.actual).toBe(1_200);
+    expect(d.categoryBreakdown.map((c) => [c.categoryId, c.amount])).toEqual([[food.id, 1_200]]);
+    expect(d.needsTotal).toBe(1_200);
+    expect(d.wantsTotal).toBe(0);
+  });
+
+  it("LED-026: a large settlement doesn't consume any category budget", async () => {
     const user = await makeUser();
     const food = await categoryFor(user.id, "Food");
     const month = "2026-05";
-
     await earn(user.id, 60_000, dateOf("2026-05-01"));
-    await prisma.budget.create({
-      data: { userId: user.id, categoryId: food.id, amount: new Prisma.Decimal(5_000), month },
-    });
-    await createTransaction(user.id, {
-      kind: "SPEND",
-      amount: 1_200,
-      date: dateOf("2026-05-03"),
-      categoryId: food.id,
-    });
+    await prisma.budget.create({ data: { userId: user.id, categoryId: food.id, amount: new Prisma.Decimal(5_000), month } });
+    await createTransaction(user.id, { kind: "SPEND", amount: 1_200, date: dateOf("2026-05-03"), categoryId: food.id });
 
-    const loan = await createLoan(user.id, {
-      type: "BORROWED",
-      personName: "Big Debt",
-      amount: 40_000,
-    });
+    const loan = await createLoan(user.id, { type: "BORROWED", personName: "Big Debt", amount: 40_000 });
     await settleLoan(user.id, loan.id, undefined, dateOf("2026-05-20"));
 
     const d = await getDashboardSummary(user.id, month);
     const foodBudget = d.budgetVsActual.find((b) => b.categoryId === food.id);
-
     expect(foodBudget?.actual, "a 40,000 repayment must not touch the Food budget").toBe(1_200);
+    expect(foodBudget?.status).toBe("On Track");
     expect(d.totalExpenses, "spending counts SPEND only").toBe(1_200);
   });
 
