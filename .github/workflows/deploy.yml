@@ -6,6 +6,14 @@ on:
       - main
       - master
 
+# Every deploy targets the same server. Two merges in quick succession used to run concurrently and
+# race to recreate the API container ("container name ... is already in use"). Queue them instead,
+# and never cancel one that is mid-migration. If several queue up, GitHub keeps only the newest
+# pending run, which is fine: each deploy resets the server to the latest origin/main anyway.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
