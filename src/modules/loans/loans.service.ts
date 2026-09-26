@@ -3,6 +3,7 @@ import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 import { monthKeyInZone } from "../../utils/date";
 import { invalidateUserDashboard } from "../../lib/cache";
+import { inSerializableTransaction } from "../../lib/serializable";
 import { clampPositive, min, money, subtract, toNumber } from "../../utils/money";
 
 export interface CreateLoanInput {
@@ -25,35 +26,6 @@ export interface UpdateLoanInput {
   amount?: number;
   dueDate?: string | null;
   notes?: string | null;
-}
-
-/**
- * Concurrent settlements on the same loan must not both read the same `settledAmount` and each
- * decide there is room to pay — that over-settles the loan and double-writes cashflow. Serializable
- * makes the conflict detectable; Postgres then aborts one with 40001 and we retry it.
- */
-async function inSerializableTransaction<T>(
-  fn: (tx: Prisma.TransactionClient) => Promise<T>,
-  attempts = 3
-): Promise<T> {
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      return await prisma.$transaction(fn, {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      });
-    } catch (error: any) {
-      // 40001 serialization_failure, 40P01 deadlock_detected — both are safe to retry.
-      if (error?.code === "P2034" || ["40001", "40P01"].includes(error?.meta?.code)) {
-        lastError = error;
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw lastError ?? new AppError(409, "Could not complete the update, please try again");
 }
 
 function serializeLoan(loan: {
