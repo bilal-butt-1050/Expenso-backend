@@ -47,7 +47,7 @@ describe("FIN — point-in-time accounting", () => {
     expect(september.netDebtSnapshot.totalLent).toBe(0);
   });
 
-  it("FIN-003/004: netWorth = cash + lent − borrowed, and equals ΣEARN − ΣSPEND", async () => {
+  it("FIN-003: netWorth = cash + lent − borrowed, in every month", async () => {
     const user = await makeUser();
     await earn(user.id, 100_000, dateOf("2026-06-01"));
     await spend(user.id, 20_000, dateOf("2026-06-15"));
@@ -57,38 +57,51 @@ describe("FIN — point-in-time accounting", () => {
 
     for (const month of ["2026-06", "2026-07", "2026-08", "2026-09"]) {
       const d = await getDashboardSummary(user.id, month);
-
       expect(
         d.cashOnHand + d.netDebtSnapshot.totalLent - d.netDebtSnapshot.totalBorrowed,
         `netWorth identity failed for ${month}`
       ).toBe(d.netWorth);
     }
-
-    // Every loan term cancels: moving money between pockets cannot change what you are worth.
-    const final = await getDashboardSummary(user.id, "2026-09");
-    expect(final.netWorth).toBe(100_000 - 20_000 - 8_000);
   });
 
-  it("FIN-005/006: closing cash carries into the next month's opening, with no drift", async () => {
+  it("FIN-004: with every loan carrying its opening movement, netWorth = ΣEARN − ΣSPEND", async () => {
+    const user = await makeUser();
+    await earn(user.id, 100_000, dateOf("2026-06-01"));
+    await spend(user.id, 20_000, dateOf("2026-06-15"));
+    await makeLoan({ userId: user.id, type: "LENT", amount: 15_000, createdAt: dateOf("2026-07-02") });
+    await makeLoan({ userId: user.id, type: "BORROWED", amount: 5_000, createdAt: dateOf("2026-07-10") });
+    await spend(user.id, 8_000, dateOf("2026-08-03"));
+
+    // Every loan term cancels: moving money between pockets can't change what you're worth.
+    expect((await getDashboardSummary(user.id, "2026-07")).netWorth).toBe(100_000 - 20_000);
+    expect((await getDashboardSummary(user.id, "2026-09")).netWorth).toBe(100_000 - 20_000 - 8_000);
+  });
+
+  it("FIN-005: each month's closing cash is the next month's opening cash, with no gaps", async () => {
     const user = await makeUser();
     await earn(user.id, 50_000, dateOf("2026-01-10"));
     await spend(user.id, 12_000, dateOf("2026-02-05"));
     await earn(user.id, 30_000, dateOf("2026-03-01"));
     await spend(user.id, 9_500, dateOf("2026-03-20"));
 
-    const months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"];
     let previousClosing: number | null = null;
-
-    for (const month of months) {
+    for (const month of ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"]) {
       const d = await getDashboardSummary(user.id, month);
-
-      expect(d.openingCash + d.netCashThisMonth, `continuity broke inside ${month}`).toBe(
-        d.closingCash
-      );
-      if (previousClosing !== null) {
-        expect(d.openingCash, `gap between months at ${month}`).toBe(previousClosing);
-      }
+      if (previousClosing !== null) expect(d.openingCash, `gap between months at ${month}`).toBe(previousClosing);
       previousClosing = d.closingCash;
+    }
+  });
+
+  it("FIN-006: opening cash plus the month's net cash is the closing cash", async () => {
+    const user = await makeUser();
+    await earn(user.id, 50_000, dateOf("2026-01-10"));
+    await spend(user.id, 12_000, dateOf("2026-02-05"));
+    await makeLoan({ userId: user.id, type: "LENT", amount: 6_000, createdAt: dateOf("2026-02-12") });
+    await earn(user.id, 30_000, dateOf("2026-03-01"));
+
+    for (const month of ["2026-01", "2026-02", "2026-03", "2026-04"]) {
+      const d = await getDashboardSummary(user.id, month);
+      expect(d.openingCash + d.netCashThisMonth, `continuity broke inside ${month}`).toBe(d.closingCash);
     }
   });
 
@@ -151,30 +164,30 @@ describe("FIN — point-in-time accounting", () => {
     expect(muchLater.closingCash).toBe(70_000);
   });
 
-  it("FIN-014/015: a loan recorded without cashflow lowers net worth but not cash", async () => {
+  it("FIN-014: a loan recorded without cashflow lowers net worth but not cash", async () => {
     const user = await makeUser();
     await earn(user.id, 30_000, dateOf("2026-02-01"));
 
     // A debt that predates the app: the money moved before we were tracking it.
-    const loan = await createLoan(user.id, {
-      type: "BORROWED",
-      personName: "Old Debt",
-      amount: 5_000,
-      recordCashflow: false,
-    });
+    await createLoan(user.id, { type: "BORROWED", personName: "Old Debt", amount: 5_000, recordCashflow: false });
 
-    const before = await getDashboardSummary(user.id, "2026-12");
-    expect(before.cashOnHand, "cash must not move").toBe(30_000);
-    expect(before.netDebtSnapshot.totalBorrowed).toBe(5_000);
-    expect(before.netWorth).toBe(25_000);
+    const d = await getDashboardSummary(user.id, "2026-12");
+    expect(d.cashOnHand, "cash must not move").toBe(30_000);
+    expect(d.netDebtSnapshot.totalBorrowed).toBe(5_000);
+    expect(d.netWorth).toBe(25_000);
+  });
 
-    // Repaying it costs real cash, and net worth is unchanged because the liability goes too.
+  it("FIN-015: repaying such a loan costs cash, and net worth holds because the debt goes too", async () => {
+    const user = await makeUser();
+    await earn(user.id, 30_000, dateOf("2026-02-01"));
+    const loan = await createLoan(user.id, { type: "BORROWED", personName: "Old Debt", amount: 5_000, recordCashflow: false });
+
     await settleLoan(user.id, loan.id);
 
-    const after = await getDashboardSummary(user.id, "2026-12");
-    expect(after.cashOnHand).toBe(25_000);
-    expect(after.netDebtSnapshot.totalBorrowed).toBe(0);
-    expect(after.netWorth, "settling must not change net worth").toBe(25_000);
+    const d = await getDashboardSummary(user.id, "2026-12");
+    expect(d.cashOnHand).toBe(25_000);
+    expect(d.netDebtSnapshot.totalBorrowed).toBe(0);
+    expect(d.netWorth, "settling must not change net worth").toBe(25_000);
   });
 
   it("FIN-016: December's closing balance is January's opening balance", async () => {
