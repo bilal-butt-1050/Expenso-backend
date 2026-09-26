@@ -25,6 +25,15 @@ export function errorHandler(
     return;
   }
 
+  // express.json()'s own errors (a malformed or oversized body) carry their 4xx status. Their
+  // messages can quote the body, so only a fixed text goes back.
+  if (isClientBodyError(err)) {
+    res.status(err.status).json({
+      error: err.type === "entity.parse.failed" ? "Malformed JSON body" : "Invalid request body",
+    });
+    return;
+  }
+
   // Prisma unique-constraint violations etc. surface here with a `code`.
   if (typeof err === "object" && err !== null && "code" in err && err.code === "P2002") {
     res.status(409).json({ error: "A record with that value already exists" });
@@ -33,6 +42,12 @@ export function errorHandler(
 
   console.error(err);
   res.status(500).json({ error: "Something went wrong on our end" });
+}
+
+function isClientBodyError(err: unknown): err is { status: number; type?: string } {
+  if (typeof err !== "object" || err === null || !("status" in err) || !("expose" in err)) return false;
+  const { status, expose } = err as { status: unknown; expose: unknown };
+  return expose === true && typeof status === "number" && status >= 400 && status < 500;
 }
 
 export function notFoundHandler(req: Request, res: Response): void {
