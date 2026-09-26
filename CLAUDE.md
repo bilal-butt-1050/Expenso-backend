@@ -94,6 +94,7 @@ image, apply migrations, restart. Check the Actions tab before assuming a deploy
 
 ## Current work
 
-Architecture is mid-overhaul. See `../IMPLEMENTATION_PLAN.md` (outside both repos) for the batch plan
-and the reasoning — in particular the unified `Transaction` ledger that replaces the separate
-`Expense`/`Income` tables and fixes the lend/borrow accounting asymmetry.
+Planning lives outside both repos, in `../docs/`. `STATE.md` is where things stand now, `PLAN.md` holds
+the milestones, `DECISIONS.md` records why things are the way they are (including the unified `Transaction` ledger and point-in-time accounting),
+and `TEST_SPEC.md` has the test IDs. Those docs exist only on Bilal's machine. The PR descriptions carry
+the reasoning into this repo's history.
