@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../src/lib/prisma";
 import { createOrReplayTransaction } from "../src/modules/transactions/transactions.service";
@@ -24,6 +25,8 @@ async function spend(userId: string, id: string | undefined, amount = 500) {
 }
 
 describe("POST /transactions with a client id", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("creates the row with the client's id", async () => {
     const user = await makeUser();
     const id = randomUUID();
@@ -55,6 +58,35 @@ describe("POST /transactions with a client id", () => {
     const results = await Promise.all([spend(user.id, id), spend(user.id, id)]);
 
     expect(results.map((r) => r.replayed).sort()).toEqual([false, true]);
+    expect(await prisma.transaction.count({ where: { userId: user.id } })).toBe(1);
+  });
+
+  it("losing the insert race to a same-user send returns the winner's row as a replay", async () => {
+    // Forces the path Promise.all can't guarantee: our lookup misses, then another request inserts
+    // the row before our insert runs, so we hit the primary-key conflict and must return 200.
+    const user = await makeUser();
+    const id = randomUUID();
+    const food = await categoryFor(user.id, "Food");
+    const realFindFirst = prisma.transaction.findFirst.bind(prisma.transaction);
+    vi.spyOn(prisma.transaction, "findFirst").mockImplementationOnce(async () => {
+      await prisma.transaction.create({
+        data: {
+          id,
+          userId: user.id,
+          kind: "SPEND",
+          amount: new Prisma.Decimal(500),
+          date: dateOf("2026-09-10"),
+          month: "2026-09",
+          categoryId: food.id,
+        },
+      });
+      return null;
+    }).mockImplementation(realFindFirst as never);
+
+    const result = await spend(user.id, id);
+
+    expect(result.replayed).toBe(true);
+    expect(result.transaction.id).toBe(id);
     expect(await prisma.transaction.count({ where: { userId: user.id } })).toBe(1);
   });
 
@@ -119,6 +151,12 @@ describe("transaction schemas", () => {
   it("accepts a UUID id, or none", () => {
     expect(createSchema.safeParse({ ...base, id: randomUUID() }).success).toBe(true);
     expect(createSchema.safeParse(base).success).toBe(true);
+  });
+
+  it("lowercases the id, so a change of case can't create a duplicate", () => {
+    const id = randomUUID();
+    const parsed = createSchema.parse({ ...base, id: id.toUpperCase() });
+    expect(parsed.id).toBe(id);
   });
 
   it("an update can never change the id", () => {

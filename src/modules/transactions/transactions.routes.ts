@@ -24,8 +24,15 @@ const KINDS = [
 ] as const satisfies readonly TransactionKind[];
 
 export const createSchema = z.object({
-  /** Optional client-generated id, for idempotent offline replay (ARCH N7.3). */
-  id: z.string().uuid().optional(),
+  /**
+   * Optional client-generated id, for idempotent offline replay (ARCH N7.3). Lowercased so a client
+   * that changes the case of an id between attempts can't create a duplicate.
+   */
+  id: z
+    .string()
+    .uuid()
+    .transform((v) => v.toLowerCase())
+    .optional(),
   kind: z.enum(["SPEND", "EARN"]),
   amount: z.number().positive(),
   date: z.coerce.date(),
