@@ -14,20 +14,23 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String?
-  googleId     String?  @unique
-  name         String?
-  avatarUrl    String?
-  currency     String   @default("PKR")
+  id              String    @id @default(uuid())
+  email           String    @unique
+  passwordHash    String?
+  googleId        String?   @unique
+  name            String?
+  avatarUrl       String?
+  currency        String    @default("PKR")
   // IANA zone. Month buckets are derived in the user's own time, not UTC — logging an expense at
   // 2am on the 1st in PKT was landing it in the previous month.
-  timezone     String   @default("Asia/Karachi")
+  timezone        String    @default("Asia/Karachi")
   // Bumped on password change and embedded in the JWT, so changing a password actually ends
   // other sessions. Without it a leaked 30-day token outlived the password it was issued under.
-  tokenVersion Int      @default(0)
-  createdAt    DateTime @default(now())
+  tokenVersion    Int       @default(0)
+  // When this account proved it owns its email address (a consumed signup code, or Google).
+  // NULL = never proven, which decides what a later Google sign-in may do (D-19, D-22).
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
 
   categories   Category[]
   expenses     Expense[]
@@ -113,7 +116,7 @@ model Budget {
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   amount     Decimal  @db.Decimal(14, 2)
-  month      String   // "YYYY-MM"
+  month      String // "YYYY-MM"
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -124,11 +127,28 @@ model Budget {
 model OtpVerification {
   id        String   @id @default(uuid())
   email     String   @unique
-  otp       String
+  // HMAC-SHA256 of email + code, keyed from JWT_SECRET. A database read can't reveal a live code.
+  otpHash   String
+  // Counted in the database, atomically, before each check: concurrent guesses can't exceed 5.
+  attempts  Int      @default(0)
   expiresAt DateTime
   createdAt DateTime @default(now())
 
   @@map("otp_verifications")
+}
+
+/// One row per code sent. The send caps (per email, per IP, global) are counted from here, so a
+/// restart can't reset them. Rows older than 48 h are pruned.
+model OtpSendLog {
+  id        String   @id @default(uuid())
+  email     String
+  ip        String
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([ip, createdAt])
+  @@index([createdAt])
+  @@map("otp_send_log")
 }
 
 enum LoanType {
@@ -228,4 +248,3 @@ model Transaction {
   @@index([loanId])
   @@map("transactions")
 }
-

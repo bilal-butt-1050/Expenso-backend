@@ -40,7 +40,7 @@ beforeEach(async () => {
   // Order matters only for speed; CASCADE handles the FKs.
   await prisma.$executeRawUnsafe(`
     TRUNCATE TABLE "transactions", "loans", "budgets", "expenses", "incomes",
-                   "categories", "otp_verifications", "users"
+                   "categories", "otp_verifications", "otp_send_log", "users"
     RESTART IDENTITY CASCADE
   `);
   // The dashboard memoises per user and month; a stale entry would mask a real regression.

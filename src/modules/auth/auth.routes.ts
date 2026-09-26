@@ -3,7 +3,8 @@ import { z } from "zod";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
 import { isValidTimeZone } from "../../utils/date";
-import { registerUser, loginUser, getUserById, updateUserProfile, generateAndSendOtp, loginWithGoogle, changePassword } from "./auth.service";
+import { registerUser, loginUser, getUserById, updateUserProfile, loginWithGoogle, changePassword } from "./auth.service";
+import { generateAndSendOtp } from "./otp.service";
 
 export const authRouter = Router();
 
@@ -58,7 +59,9 @@ authRouter.post(
   "/send-otp",
   asyncHandler(async (req, res) => {
     const body = sendOtpSchema.parse(req.body);
-    await generateAndSendOtp(body.email);
+    // Counted per IP for the send cap. Until `trust proxy` is set (T3.7), this is the proxy's
+    // address, so the per-IP cap is effectively global. Acceptable with one active user.
+    await generateAndSendOtp(body.email, req.ip ?? "unknown");
     res.json({ message: "OTP sent" });
   })
 );

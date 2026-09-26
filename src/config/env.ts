@@ -35,6 +35,10 @@ function requireJwtSecret(): string {
   return secret;
 }
 
+if (!process.env.BREVO_API_KEY || !process.env.MAIL_FROM_EMAIL) {
+  console.warn("[env] BREVO_API_KEY or MAIL_FROM_EMAIL is not set: signup codes can't be emailed");
+}
+
 export const env = {
   nodeEnv,
   port: Number(process.env.PORT ?? 4000),
@@ -43,20 +47,18 @@ export const env = {
   jwtSecret: requireJwtSecret(),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "30d",
   corsOrigin: process.env.CORS_ORIGIN ?? "*",
-  resendApiKey: process.env.RESEND_API_KEY,
-  /**
-   * Sender for verification email. Resend's shared `resend.dev` domain is testing-only and
-   * returns 403 for any recipient other than the account owner, so real delivery needs a
-   * verified domain here.
-   */
-  mailFrom: process.env.MAIL_FROM ?? "Expenso <auth@resend.dev>",
+  /** Brevo transactional email (D-17, D-21). Without it, OTP email is unavailable in production. */
+  brevoApiKey: process.env.BREVO_API_KEY,
+  /** The sender verified in Brevo. Brevo rewrites a free-mail sender to its own domain. */
+  mailFromEmail: process.env.MAIL_FROM_EMAIL,
+  mailFromName: process.env.MAIL_FROM_NAME ?? "Expenso",
   /**
    * Whether signup must present a valid emailed code.
    *
    * Off by default, deliberately. The verification path below is fully implemented and hardened,
    * but turning it on before email can actually be delivered — and before the mobile client has a
    * code-entry step — would lock every new user out of signup. Flip this to `true` in the same
-   * change that ships a verified MAIL_FROM domain and the mobile OTP screen.
+   * change that ships working OTP email (Brevo) and the mobile OTP screen.
    */
   requireEmailVerification: process.env.REQUIRE_EMAIL_VERIFICATION === "true",
   googleClientIdWeb: process.env.GOOGLE_CLIENT_ID_WEB,
