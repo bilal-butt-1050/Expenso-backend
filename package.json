@@ -17,9 +17,9 @@
     "prisma:studio": "prisma studio",
     "seed": "tsx prisma/seed.ts",
     "start": "node dist/server.js",
-    "test": "cross-env DATABASE_URL=\"postgresql://postgres:ndinwefbwncofnwefm0owdjqwc0we@localhost:5432/expenso_test?schema=public\" DIRECT_URL=\"postgresql://postgres:ndinwefbwncofnwefm0owdjqwc0we@localhost:5432/expenso_test?schema=public\" vitest run",
-    "test:coverage": "cross-env DATABASE_URL=\"postgresql://postgres:ndinwefbwncofnwefm0owdjqwc0we@localhost:5432/expenso_test?schema=public\" DIRECT_URL=\"postgresql://postgres:ndinwefbwncofnwefm0owdjqwc0we@localhost:5432/expenso_test?schema=public\" vitest run --coverage",
-    "test:watch": "cross-env DATABASE_URL=\"postgresql://postgres:ndinwefbwncofnwefm0owdjqwc0we@localhost:5432/expenso_test?schema=public\" DIRECT_URL=\"postgresql://postgres:ndinwefbwncofnwefm0owdjqwc0we@localhost:5432/expenso_test?schema=public\" vitest",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -48,7 +48,6 @@
     "@types/morgan": "^1.9.9",
     "@types/node": "^20.16.10",
     "@types/node-cache": "^4.1.3",
-    "cross-env": "^10.1.0",
     "tsx": "^4.19.1",
     "typescript": "^5.6.2",
     "vitest": "^4.1.11"
