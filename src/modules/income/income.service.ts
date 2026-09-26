@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, Transaction } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 import { monthKeyInZone } from "../../utils/date";
@@ -22,7 +22,7 @@ export interface IncomeInput {
   paymentMethod?: string;
 }
 
-type Row = Prisma.TransactionGetPayload<{}>;
+type Row = Transaction;
 
 function toLegacyIncome(t: Row) {
   return {

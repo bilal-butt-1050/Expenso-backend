@@ -5,7 +5,6 @@ import { PrismaClient } from "@prisma/client";
 // and the global-cache trick below stops `tsx watch` from creating a fresh
 // client on every hot reload during development.
 declare global {
-  // eslint-disable-next-line no-var
   var __prisma: PrismaClient | undefined;
 }
 

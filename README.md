@@ -35,6 +35,7 @@ npm run dev              # http://localhost:4000
 
 ```bash
 npm run typecheck        # must be 0 errors
+npm run lint             # must be 0 errors
 npm test                 # Vitest against a local expenso_test database
 ```
 

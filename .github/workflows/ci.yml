@@ -1,7 +1,7 @@
 name: CI
 
-# Typecheck and the integration tests on every pull request, before anything reaches main (merging
-# deploys to production). Lint joins once ESLint is set up (T4.4).
+# Typecheck (src and tests), lint and the integration tests on every pull request, before anything
+# reaches main (merging deploys to production).
 #
 # `pull_request`, never `pull_request_target`: the job runs the PR's code, so it gets read-only
 # repository access and no secrets (threat model M6).
@@ -58,6 +58,9 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
 
       - name: Tests
         run: npm test

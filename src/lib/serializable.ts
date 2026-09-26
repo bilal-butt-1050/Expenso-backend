@@ -21,9 +21,10 @@ export async function inSerializableTransaction<T>(
       return await prisma.$transaction(fn, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const e = error as { code?: unknown; meta?: { code?: unknown } } | null;
       // 40001 serialization_failure, 40P01 deadlock_detected — both are safe to retry.
-      if (error?.code === "P2034" || ["40001", "40P01"].includes(error?.meta?.code)) {
+      if (e?.code === "P2034" || ["40001", "40P01"].includes(String(e?.meta?.code))) {
         continue;
       }
       throw error;

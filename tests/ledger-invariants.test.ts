@@ -34,7 +34,7 @@ describe("LEDGER — money invariants", () => {
     const user = await makeUser();
     await earn(user.id, 50_000, dateOf("2026-03-01"));
 
-    const before = (await getDashboardSummary(user.id, "2026-12")) as any;
+    const before = await getDashboardSummary(user.id, "2026-12");
 
     const loan = await createLoan(user.id, {
       type: "LENT",
@@ -42,13 +42,13 @@ describe("LEDGER — money invariants", () => {
       amount: 10_000,
     });
 
-    const lent = (await getDashboardSummary(user.id, "2026-12")) as any;
+    const lent = await getDashboardSummary(user.id, "2026-12");
     expect(lent.cashOnHand, "cash must fall when the money leaves").toBe(before.cashOnHand - 10_000);
     expect(lent.netWorth, "net worth must not move on a transfer").toBe(before.netWorth);
 
     await settleLoan(user.id, loan.id);
 
-    const after = (await getDashboardSummary(user.id, "2026-12")) as any;
+    const after = await getDashboardSummary(user.id, "2026-12");
     expect(after.cashOnHand).toBe(before.cashOnHand);
     expect(after.netWorth).toBe(before.netWorth);
   });
@@ -56,7 +56,7 @@ describe("LEDGER — money invariants", () => {
   it("LED-002: borrow then repay in full leaves net worth untouched", async () => {
     const user = await makeUser();
     await earn(user.id, 50_000, dateOf("2026-03-01"));
-    const before = (await getDashboardSummary(user.id, "2026-12")) as any;
+    const before = await getDashboardSummary(user.id, "2026-12");
 
     const loan = await createLoan(user.id, {
       type: "BORROWED",
@@ -64,13 +64,13 @@ describe("LEDGER — money invariants", () => {
       amount: 8_000,
     });
 
-    const borrowed = (await getDashboardSummary(user.id, "2026-12")) as any;
+    const borrowed = await getDashboardSummary(user.id, "2026-12");
     expect(borrowed.cashOnHand).toBe(before.cashOnHand + 8_000);
     expect(borrowed.netWorth).toBe(before.netWorth);
 
     await settleLoan(user.id, loan.id);
 
-    const after = (await getDashboardSummary(user.id, "2026-12")) as any;
+    const after = await getDashboardSummary(user.id, "2026-12");
     expect(after.cashOnHand).toBe(before.cashOnHand);
     expect(after.netWorth).toBe(before.netWorth);
   });
@@ -90,7 +90,7 @@ describe("LEDGER — money invariants", () => {
     await createLoan(user.id, { type: "BORROWED", personName: "B", amount: 2_500 });
     await settleLoan(user.id, l1.id, 2_000);
 
-    const d = (await getDashboardSummary(user.id, "2026-12")) as any;
+    const d = await getDashboardSummary(user.id, "2026-12");
     expect(d.cashOnHand).toBe(await cashFromLedger(user.id));
   });
 
@@ -107,7 +107,7 @@ describe("LEDGER — money invariants", () => {
     expect(fresh.status).toBe("SETTLED");
     expect(fresh.settledAmount.toNumber()).toBe(9_000);
 
-    const d = (await getDashboardSummary(user.id, "2026-12")) as any;
+    const d = await getDashboardSummary(user.id, "2026-12");
     expect(d.netDebtSnapshot.totalLent).toBe(0);
     expect(d.cashOnHand).toBe(30_000);
   });
@@ -214,10 +214,10 @@ describe("LEDGER — money invariants", () => {
     });
     await settleLoan(user.id, loan.id, undefined, dateOf("2026-05-20"));
 
-    const d = (await getDashboardSummary(user.id, month)) as any;
-    const foodBudget = d.budgetVsActual.find((b: any) => b.categoryId === food.id);
+    const d = await getDashboardSummary(user.id, month);
+    const foodBudget = d.budgetVsActual.find((b) => b.categoryId === food.id);
 
-    expect(foodBudget.actual, "a 40,000 repayment must not touch the Food budget").toBe(1_200);
+    expect(foodBudget?.actual, "a 40,000 repayment must not touch the Food budget").toBe(1_200);
     expect(d.totalExpenses, "spending counts SPEND only").toBe(1_200);
   });
 
