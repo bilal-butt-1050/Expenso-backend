@@ -30,6 +30,11 @@ export const CASH_SIGN: Record<TransactionKind, 1 | -1> = {
 };
 
 export interface CreateTransactionInput {
+  /**
+   * Client-generated UUID (optional). Makes the create idempotent: an offline write replayed after
+   * a timeout returns the row it already created instead of a duplicate (ARCH N7.3).
+   */
+  id?: string;
   kind: ManualKind;
   amount: number;
   date: Date;
@@ -161,6 +166,26 @@ async function getUserTimezone(userId: string): Promise<string> {
 }
 
 export async function createTransaction(userId: string, input: CreateTransactionInput) {
+  return (await createOrReplayTransaction(userId, input)).transaction;
+}
+
+/**
+ * Creates the transaction, or, when a client `id` was already used by this user, returns that row
+ * untouched with `replayed: true`. An `id` held by anyone else is a generic 409 that reveals nothing
+ * about the row (OWN-008).
+ *
+ * The replay check comes before validation on purpose: a replay whose category was deleted in the
+ * meantime must still return the row that was saved, not fail validation.
+ */
+export async function createOrReplayTransaction(
+  userId: string,
+  input: CreateTransactionInput
+): Promise<{ transaction: ReturnType<typeof serializeTransaction>; replayed: boolean }> {
+  if (input.id) {
+    const existing = await findOwnTransaction(userId, input.id);
+    if (existing) return { transaction: serializeTransaction(existing), replayed: true };
+  }
+
   if (input.kind === "SPEND") {
     if (!input.categoryId) throw new AppError(400, "A category is required for an expense");
     await assertCategoryOwnership(userId, input.categoryId);
@@ -171,26 +196,48 @@ export async function createTransaction(userId: string, input: CreateTransaction
 
   const timezone = await getUserTimezone(userId);
 
-  const created = await prisma.transaction.create({
-    data: {
-      userId,
-      kind: input.kind,
-      amount: money(input.amount),
-      date: input.date,
-      month: monthKeyInZone(input.date, timezone),
-      description: input.description ?? null,
-      paymentMethod: input.paymentMethod ?? (input.kind === "EARN" ? "Bank Transfer" : "Cash"),
-      categoryId: input.kind === "SPEND" ? input.categoryId! : null,
-      needWant: input.kind === "SPEND" ? input.needWant ?? "Need" : null,
-      source: input.kind === "EARN" ? input.source! : null,
-      sourceIcon: input.kind === "EARN" ? input.sourceIcon ?? "cash-multiple" : null,
-      sourceColor: input.kind === "EARN" ? input.sourceColor ?? "#10B981" : null,
-    },
-    include: { category: true },
-  });
+  let created;
+  try {
+    created = await prisma.transaction.create({
+      data: {
+        ...(input.id ? { id: input.id } : {}),
+        userId,
+        kind: input.kind,
+        amount: money(input.amount),
+        date: input.date,
+        month: monthKeyInZone(input.date, timezone),
+        description: input.description ?? null,
+        paymentMethod: input.paymentMethod ?? (input.kind === "EARN" ? "Bank Transfer" : "Cash"),
+        categoryId: input.kind === "SPEND" ? input.categoryId! : null,
+        needWant: input.kind === "SPEND" ? input.needWant ?? "Need" : null,
+        source: input.kind === "EARN" ? input.source! : null,
+        sourceIcon: input.kind === "EARN" ? input.sourceIcon ?? "cash-multiple" : null,
+        sourceColor: input.kind === "EARN" ? input.sourceColor ?? "#10B981" : null,
+      },
+      include: { category: true },
+    });
+  } catch (error) {
+    // Lost a race with a concurrent replay of the same id, or the id is someone else's.
+    if (input.id && isPrimaryKeyConflict(error)) {
+      const existing = await findOwnTransaction(userId, input.id);
+      if (existing) return { transaction: serializeTransaction(existing), replayed: true };
+      throw new AppError(409, "Conflict");
+    }
+    throw error;
+  }
 
   invalidateUserDashboard(userId);
-  return serializeTransaction(created);
+  return { transaction: serializeTransaction(created), replayed: false };
+}
+
+function findOwnTransaction(userId: string, id: string) {
+  return prisma.transaction.findFirst({ where: { id, userId }, include: { category: true } });
+}
+
+function isPrimaryKeyConflict(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") return false;
+  const target = error.meta?.target;
+  return Array.isArray(target) ? target.includes("id") : String(target ?? "").includes("pkey");
 }
 
 /**
