@@ -5,7 +5,8 @@ import { OAuth2Client } from "google-auth-library";
 import { prisma } from "../src/lib/prisma";
 import { env } from "../src/config/env";
 import { createApp } from "../src/app";
-import { loginWithGoogle, registerUser } from "../src/modules/auth/auth.service";
+import { changePassword, loginWithGoogle, registerUser } from "../src/modules/auth/auth.service";
+import { comparePassword } from "../src/utils/password";
 import { signToken } from "../src/utils/jwt";
 
 /**
@@ -232,5 +233,97 @@ describe("Google sign-in", () => {
     await loginWithGoogle("token");
     expect(await tokenWorks(stale)).toBe(false);
     expect(await tokenWorks(signToken({ userId: u.id, tv: 1 }))).toBe(true);
+  });
+
+  // --- Security review of T3.8 ---------------------------------------------------------------
+
+  it("sub path: a legacy link to an address Google isn't authoritative for keeps its password", async () => {
+    // Linked by the old unconditional code: victim@corp.com's password account got some Google id.
+    const owner = await passwordAccount("victim@corp.com");
+    await prisma.user.update({ where: { id: owner.id }, data: { googleId: "g-squatter" } });
+    googleSays({ email: "victim@corp.com", sub: "g-squatter" });
+
+    await loginWithGoogle("token");
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: owner.id } });
+    expect(row.passwordHash).not.toBeNull();
+    expect(row.tokenVersion).toBe(0);
+    expect(row.emailVerifiedAt).toBeNull();
+    expect(await tokenWorks(owner.token)).toBe(true);
+  });
+
+  it("sub path: a Google email that no longer matches the stored one proves nothing", async () => {
+    const owner = await passwordAccount("mine@gmail.com");
+    await prisma.user.update({ where: { id: owner.id }, data: { googleId: "g-moved" } });
+    googleSays({ email: "different@gmail.com", sub: "g-moved" });
+
+    await loginWithGoogle("token");
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: owner.id } });
+    expect(row.passwordHash).not.toBeNull();
+    expect(row.emailVerifiedAt).toBeNull();
+  });
+
+  it("@googlemail.com is authoritative", async () => {
+    const owner = await passwordAccount("old@googlemail.com");
+    googleSays({ email: "old@googlemail.com", sub: "g-gm" });
+
+    await loginWithGoogle("token");
+
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: owner.id } })).googleId).toBe("g-gm");
+  });
+
+  it("a subdomain address isn't covered by its parent's hd", async () => {
+    await passwordAccount("x@mail.acme.io");
+    googleSays({ email: "x@mail.acme.io", sub: "g-sub", hd: "acme.io" });
+    expect(await statusOf(loginWithGoogle("token"))).toBe(409);
+  });
+
+  it("a token without a sub → 401", async () => {
+    vi.spyOn(OAuth2Client.prototype, "verifyIdToken").mockResolvedValue({
+      getPayload: () => ({ email: "nosub@gmail.com", email_verified: true }),
+    } as never);
+    expect(await statusOf(loginWithGoogle("token"))).toBe(401);
+  });
+
+  it("Google's certificates unreachable → 503, not 'invalid token'", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(OAuth2Client.prototype, "verifyIdToken").mockRejectedValue(
+      new Error("Failed to retrieve verification certificates: getaddrinfo ENOTFOUND www.googleapis.com")
+    );
+    const err = await loginWithGoogle("token").catch((e) => e);
+    expect(err.statusCode).toBe(503);
+  });
+
+  it("two concurrent first sign-ins create exactly one account", async () => {
+    googleSays({ email: "race@gmail.com", sub: "g-race" });
+    const statuses = await Promise.all([statusOf(loginWithGoogle("t")), statusOf(loginWithGoogle("t"))]);
+    expect(statuses).toContain(200);
+    expect(await prisma.user.count({ where: { email: "race@gmail.com" } })).toBe(1);
+  });
+});
+
+describe("changePassword after the session ended", () => {
+  it("a stale session can't set a password (the reclaim race)", async () => {
+    const squatter = await passwordAccount("reclaimed@gmail.com");
+    // The owner's Google sign-in clears the squatter's password and ends their session...
+    googleSays({ email: "reclaimed@gmail.com", sub: "g-owner2" });
+    await loginWithGoogle("token");
+    // ...so the squatter's in-flight change, carrying the old token version, must not land.
+    const err = await changePassword(squatter.id, 0, undefined, "newpassword1").catch((e) => e);
+
+    expect(err.statusCode).toBe(401);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: squatter.id } })).passwordHash).toBeNull();
+  });
+
+  it("a current session changes the password and ends the others", async () => {
+    const user = await passwordAccount("changer@gmail.com");
+
+    await changePassword(user.id, 0, "password123", "newpassword1");
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(await comparePassword("newpassword1", row.passwordHash!)).toBe(true);
+    expect(row.tokenVersion).toBe(1);
+    expect(await tokenWorks(user.token)).toBe(false);
   });
 });

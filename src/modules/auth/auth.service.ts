@@ -94,6 +94,8 @@ export async function loginUser(email: string, password: string) {
  */
 function classifyGoogleTokenError(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
+  // Google's signing keys couldn't be fetched: an outage or a network problem, not a bad token.
+  if (/^Failed to retrieve verification certificates/i.test(message)) return "certs";
   if (/recipient|audience/i.test(message)) return "audience";
   if (/too late|expired/i.test(message)) return "expired";
   if (/signature|pem|certificate/i.test(message)) return "signature";
@@ -139,7 +141,12 @@ export async function loginWithGoogle(idToken: string) {
   try {
     ticket = await googleClient.verifyIdToken({ idToken, audience });
   } catch (error) {
-    console.warn(`[auth] google token rejected: ${classifyGoogleTokenError(error)}`);
+    const reason = classifyGoogleTokenError(error);
+    if (reason === "certs") {
+      console.error("[auth] google sign-in unavailable: couldn't fetch Google's certificates");
+      throw new AppError(503, "Google sign-in is temporarily unavailable. Please try again later.");
+    }
+    console.warn(`[auth] google token rejected: ${reason}`);
     throw new AppError(401, "Invalid Google token");
   }
 
@@ -160,19 +167,24 @@ export async function loginWithGoogle(idToken: string) {
   // 1. By Google's stable id. The email isn't changed even if Google's has.
   const bySub = await prisma.user.findUnique({ where: { googleId } });
   if (bySub) {
-    const unproven = !bySub.emailVerifiedAt;
+    // Google proves ownership of the *stored* address only if it's the same address it just
+    // verified, and one it's authoritative for. An account linked by the old unconditional code to,
+    // say, victim@corp.com proves nothing: clearing its password there would hand the account to
+    // whoever holds that Google login (security review of T3.8). Such rows are left for review.
+    const proves = !bySub.emailVerifiedAt && bySub.email === email && googleIsAuthoritative(email, hd);
+    const reclaim = proves && Boolean(bySub.passwordHash);
     const user = await prisma.user.update({
       where: { id: bySub.id },
       data: {
         avatarUrl: picture || bySub.avatarUrl,
-        // D-40: linked before this rule existed, never proved ownership, and has a password,
-        // which may not be the owner's. Google now proves ownership, so the password goes, and
-        // with it every other session.
-        ...(unproven && bySub.passwordHash ? { passwordHash: null, tokenVersion: { increment: 1 } } : {}),
-        ...(unproven ? { emailVerifiedAt: now } : {}),
+        // D-40: linked before this rule existed, never proved ownership, and has a password, which
+        // may not be the owner's. Google now proves ownership, so the password goes, and with it
+        // every other session.
+        ...(reclaim ? { passwordHash: null, tokenVersion: { increment: 1 } } : {}),
+        ...(proves ? { emailVerifiedAt: now } : {}),
       },
     });
-    if (unproven && bySub.passwordHash) invalidateTokenVersionCache(user.id);
+    if (reclaim) invalidateTokenVersionCache(user.id);
     return { token: signToken({ userId: user.id, tv: user.tokenVersion }), user: toPublicUser(user) };
   }
 
@@ -201,8 +213,10 @@ export async function loginWithGoogle(idToken: string) {
   }
 
   const reclaim = !byEmail.emailVerifiedAt && Boolean(byEmail.passwordHash);
-  const user = await prisma.user.update({
-    where: { id: byEmail.id },
+  // Conditional on the row still being unlinked, with the same password we just read: a concurrent
+  // link, or a password change racing this reclaim, makes this match nothing instead of overwriting.
+  const linked = await prisma.user.updateMany({
+    where: { id: byEmail.id, googleId: null, passwordHash: byEmail.passwordHash },
     data: {
       googleId,
       avatarUrl: picture || byEmail.avatarUrl,
@@ -212,7 +226,11 @@ export async function loginWithGoogle(idToken: string) {
       ...(!byEmail.emailVerifiedAt ? { emailVerifiedAt: now } : {}),
     },
   });
-  if (reclaim) invalidateTokenVersionCache(user.id);
+  if (linked.count !== 1) {
+    throw new AppError(409, "This account changed while signing in. Please try again.");
+  }
+  if (reclaim) invalidateTokenVersionCache(byEmail.id);
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: byEmail.id } });
   return { token: signToken({ userId: user.id, tv: user.tokenVersion }), user: toPublicUser(user) };
 }
 
@@ -235,7 +253,12 @@ export async function updateUserProfile(
   return toPublicUser(user);
 }
 
-export async function changePassword(userId: string, currentPassword?: string, newPassword?: string) {
+export async function changePassword(
+  userId: string,
+  tokenVersion: number,
+  currentPassword?: string,
+  newPassword?: string
+) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
     throw new AppError(404, "User not found");
@@ -260,10 +283,17 @@ export async function changePassword(userId: string, currentPassword?: string, n
 
   // Bumping tokenVersion invalidates every token issued under the old password. Without this a
   // leaked 30-day JWT kept working after the user changed their password to lock someone out.
-  await prisma.user.update({
-    where: { id: userId },
+  //
+  // Only while this session is still current, and the password is still the one checked above. A
+  // Google sign-in can clear a squatter's password and end their sessions between the check and
+  // this write; an unconditional write would then give the squatter a fresh, permanent password.
+  const updated = await prisma.user.updateMany({
+    where: { id: userId, tokenVersion, passwordHash: user.passwordHash },
     data: { passwordHash: newHash, tokenVersion: { increment: 1 } },
   });
+  if (updated.count !== 1) {
+    throw new AppError(401, "Session has expired, please sign in again");
+  }
   invalidateTokenVersionCache(userId);
 }
 

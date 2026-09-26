@@ -118,7 +118,7 @@ authRouter.patch(
   requireAuth,
   asyncHandler(async (req, res) => {
     const body = changePasswordSchema.parse(req.body);
-    await changePassword(req.userId!, body.currentPassword, body.newPassword);
+    await changePassword(req.userId!, req.tokenVersion ?? 0, body.currentPassword, body.newPassword);
     res.json({ message: "Password updated successfully" });
   })
 );
