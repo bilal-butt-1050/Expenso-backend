@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from "vitest";
 import { prisma } from "../src/lib/prisma";
 import { env } from "../src/config/env";
 import { Prisma } from "@prisma/client";
@@ -20,7 +20,7 @@ const saved = {
   requireEmailVerification: env.requireEmailVerification,
 };
 
-let fetchSpy: ReturnType<typeof vi.spyOn>;
+let fetchSpy: MockInstance<typeof fetch>;
 /** Every email the stub was asked to send, with the code pulled out of its HTML. */
 let sent: { to: string; code: string }[];
 

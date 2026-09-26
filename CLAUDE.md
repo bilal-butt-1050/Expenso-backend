@@ -26,7 +26,8 @@ npm install
 npm run db:create        # one-off: creates expenso_dev
 npm run prisma:migrate   # apply migrations locally
 npm run dev              # tsx watch
-npm run typecheck        # tsc --noEmit — must be 0 errors before any commit
+npm run typecheck        # tsc over src and tests — must be 0 errors before any commit
+npm run lint             # ESLint — must be 0 errors before any commit
 ```
 
 ### Changing the schema

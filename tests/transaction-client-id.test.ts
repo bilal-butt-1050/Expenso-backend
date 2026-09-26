@@ -68,7 +68,7 @@ describe("POST /transactions with a client id", () => {
     const id = randomUUID();
     const food = await categoryFor(user.id, "Food");
     const realFindFirst = prisma.transaction.findFirst.bind(prisma.transaction);
-    vi.spyOn(prisma.transaction, "findFirst").mockImplementationOnce(async () => {
+    vi.spyOn(prisma.transaction, "findFirst").mockImplementationOnce((async () => {
       await prisma.transaction.create({
         data: {
           id,
@@ -81,7 +81,7 @@ describe("POST /transactions with a client id", () => {
         },
       });
       return null;
-    }).mockImplementation(realFindFirst as never);
+    }) as never).mockImplementation(realFindFirst as never);
 
     const result = await spend(user.id, id);
 

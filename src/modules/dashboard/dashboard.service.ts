@@ -21,11 +21,19 @@ const ofKind = (rows: Row[], ...kinds: TransactionKind[]) =>
  * - cash on hand sums all six kinds, so lending and collecting nets to zero;
  * - net worth folds in what is still owed in each direction.
  */
-export async function getDashboardSummary(userId: string, month: string) {
+export async function getDashboardSummary(userId: string, month: string): Promise<DashboardSummary> {
   const cacheKey = `dashboard_${userId}_${month}`;
-  const cached = cache.get(cacheKey);
+  const cached = cache.get<DashboardSummary>(cacheKey);
   if (cached) return cached;
 
+  const result = await buildDashboardSummary(userId, month);
+  cache.set(cacheKey, result);
+  return result;
+}
+
+export type DashboardSummary = Awaited<ReturnType<typeof buildDashboardSummary>>;
+
+async function buildDashboardSummary(userId: string, month: string) {
   const prevMonth = getPreviousMonth(month);
 
   const user = await prisma.user.findUnique({
@@ -302,7 +310,6 @@ export async function getDashboardSummary(userId: string, month: string) {
     trend: await getMonthlyTrend(userId, month, 12),
   };
 
-  cache.set(cacheKey, result);
   return result;
 }
 
