@@ -63,5 +63,6 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
     }
 
     req.userId = payload.userId;
+    req.tokenVersion = payload.tv;
   })().then(() => next(), next);
 }
