@@ -52,7 +52,9 @@ const updateProfileSchema = z.object({
 
 const changePasswordSchema = z.object({
   currentPassword: z.string().optional(),
-  newPassword: z.string().min(8, "New password must be at least 8 characters"),
+  newPassword: z.string().min(8, "New password must be at least 8 characters").max(200),
+  // Proof for setting the first password on a Google-only account.
+  googleIdToken: z.string().min(1).max(4096).optional(),
 });
 
 authRouter.post(
@@ -118,7 +120,13 @@ authRouter.patch(
   requireAuth,
   asyncHandler(async (req, res) => {
     const body = changePasswordSchema.parse(req.body);
-    await changePassword(req.userId!, req.tokenVersion ?? 0, body.currentPassword, body.newPassword);
-    res.json({ message: "Password updated successfully" });
+    const { token } = await changePassword(
+      req.userId!,
+      req.tokenVersion ?? 0,
+      body.currentPassword,
+      body.newPassword,
+      body.googleIdToken
+    );
+    res.json({ message: "Password updated successfully", token });
   })
 );

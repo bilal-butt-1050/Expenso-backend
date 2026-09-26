@@ -41,11 +41,14 @@ interface Claims {
   email_verified?: boolean;
   hd?: string;
   picture?: string;
+  /** Issued-at, in seconds. Defaults to now. */
+  iat?: number;
 }
 
 function googleSays(claims: Claims) {
+  const iat = Math.floor(Date.now() / 1000);
   vi.spyOn(OAuth2Client.prototype, "verifyIdToken").mockResolvedValue({
-    getPayload: () => ({ email_verified: true, name: "Google Name", ...claims }),
+    getPayload: () => ({ email_verified: true, name: "Google Name", iat, ...claims }),
   } as never);
 }
 
@@ -325,5 +328,152 @@ describe("changePassword after the session ended", () => {
     expect(await comparePassword("newpassword1", row.passwordHash!)).toBe(true);
     expect(row.tokenVersion).toBe(1);
     expect(await tokenWorks(user.token)).toBe(false);
+  });
+});
+
+describe("PATCH /auth/password", () => {
+  // Its own app per test: the /auth rate limit budget is per app, and this file shares one.
+  let local: Server;
+  let base: string;
+  beforeEach(async () => {
+    local = createApp().listen(0);
+    await new Promise((resolve) => local.once("listening", resolve));
+    base = `http://127.0.0.1:${(local.address() as AddressInfo).port}`;
+  });
+  afterEach(() => new Promise((resolve) => local.close(resolve)));
+
+  async function works(token: string): Promise<boolean> {
+    const res = await fetch(`${base}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+    return res.status === 200;
+  }
+
+  async function patchPassword(token: string, body: object) {
+    const res = await fetch(`${base}/auth/password`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: (await res.json()) as { token?: string; error?: string } };
+  }
+
+  async function me(token: string) {
+    const res = await fetch(`${base}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+    return (await res.json()) as { hasPassword: boolean };
+  }
+
+  /** A Google-only account: no password. Google stays stubbed as this account afterwards. */
+  async function googleOnly(email: string, sub: string) {
+    googleSays({ email, sub });
+    return loginWithGoogle("token");
+  }
+
+  it("changing a password returns a working session and ends the old one", async () => {
+    const user = await passwordAccount("change-http@gmail.com");
+
+    const res = await patchPassword(user.token, { currentPassword: "password123", newPassword: "newpassword1" });
+
+    expect(res.status).toBe(200);
+    expect(await works(res.body.token!)).toBe(true);
+    expect(await works(user.token)).toBe(false);
+    expect((await me(res.body.token!)).hasPassword).toBe(true);
+  });
+
+  it("a wrong current password is a 400 and changes nothing", async () => {
+    const user = await passwordAccount("wrong-current@gmail.com");
+
+    const res = await patchPassword(user.token, { currentPassword: "not-it", newPassword: "newpassword1" });
+
+    expect(res.status).toBe(400);
+    expect(await works(user.token)).toBe(true);
+  });
+
+  it("hasPassword is false on a Google-only account", async () => {
+    const { token } = await googleOnly("no-password@gmail.com", "g-nopass");
+    expect((await me(token)).hasPassword).toBe(false);
+  });
+
+  it("M4: a session alone can't set the first password", async () => {
+    const { token, user } = await googleOnly("session-only@gmail.com", "g-session");
+
+    const res = await patchPassword(token, { newPassword: "newpassword1" });
+
+    expect(res.status).toBe(400);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).passwordHash).toBeNull();
+  });
+
+  it("M4: a fresh Google confirmation for this account sets the first password", async () => {
+    const { token, user } = await googleOnly("set-first@gmail.com", "g-setfirst");
+
+    const res = await patchPassword(token, { newPassword: "newpassword1", googleIdToken: "fresh" });
+
+    expect(res.status).toBe(200);
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(await comparePassword("newpassword1", row.passwordHash!)).toBe(true);
+    expect(await works(res.body.token!)).toBe(true);
+    expect(await works(token)).toBe(false);
+  });
+
+  it("M4: a different Google account's confirmation is refused", async () => {
+    const { token, user } = await googleOnly("mine@gmail.com", "g-mine");
+    googleSays({ email: "attacker@gmail.com", sub: "g-attacker" });
+
+    const res = await patchPassword(token, { newPassword: "newpassword1", googleIdToken: "other" });
+
+    expect(res.status).toBe(403);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).passwordHash).toBeNull();
+  });
+
+  it("M4: a confirmation older than 10 minutes is refused, without ending the session", async () => {
+    const { token } = await googleOnly("stale-proof@gmail.com", "g-stale");
+    googleSays({ email: "stale-proof@gmail.com", sub: "g-stale", iat: Math.floor(Date.now() / 1000) - 11 * 60 });
+
+    const res = await patchPassword(token, { newPassword: "newpassword1", googleIdToken: "old" });
+
+    expect(res.status).toBe(400);
+    expect(await works(token)).toBe(true);
+  });
+
+  it("M4: a Google outage stays a 503, not a 400 or 401", async () => {
+    const { token } = await googleOnly("outage@gmail.com", "g-outage");
+    vi.spyOn(OAuth2Client.prototype, "verifyIdToken").mockRejectedValue(
+      new Error("Failed to retrieve verification certificates: getaddrinfo ENOTFOUND")
+    );
+
+    const res = await patchPassword(token, { newPassword: "newpassword1", googleIdToken: "t" });
+
+    expect(res.status).toBe(503);
+    expect(await works(token)).toBe(true);
+  });
+
+  it("an account with neither a password nor a Google link can't set one", async () => {
+    const orphan = await prisma.user.create({ data: { email: "orphan@example.com" } });
+    const token = signToken({ userId: orphan.id, tv: 0 });
+
+    const res = await patchPassword(token, { newPassword: "newpassword1", googleIdToken: "t" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("two changes at once: exactly one wins, and only its token works", async () => {
+    const user = await passwordAccount("double-submit@gmail.com");
+    const body = { currentPassword: "password123", newPassword: "newpassword1" };
+
+    const results = await Promise.all([patchPassword(user.token, body), patchPassword(user.token, body)]);
+
+    const won = results.filter((r) => r.status === 200);
+    expect(won).toHaveLength(1);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 401]);
+    expect(await works(won[0].body.token!)).toBe(true);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).tokenVersion).toBe(1);
+  });
+
+  it("M4: a token Google rejects is a 400, not a 401 (a 401 would sign the app out)", async () => {
+    const { token } = await googleOnly("bad-proof@gmail.com", "g-bad");
+    vi.spyOn(OAuth2Client.prototype, "verifyIdToken").mockRejectedValue(new Error("Invalid token signature"));
+
+    const res = await patchPassword(token, { newPassword: "newpassword1", googleIdToken: "forged" });
+
+    expect(res.status).toBe(400);
+    expect(await works(token)).toBe(true);
   });
 });
