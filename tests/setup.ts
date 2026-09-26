@@ -17,7 +17,7 @@ const TEST_DB = "expenso_test";
 if (!process.env.DATABASE_URL?.includes(TEST_DB)) {
   throw new Error(
     `Refusing to run: DATABASE_URL must point at "${TEST_DB}". ` +
-      `Run tests with "npm test", which sets it. Never point these at a database you care about — ` +
+      `Set it in .env.test (copy .env.test.example). Never point it at a database you care about — ` +
       `every test truncates the whole schema.`
   );
 }

@@ -1,4 +1,9 @@
+import { config } from "dotenv";
 import { defineConfig } from "vitest/config";
+
+// The test database URL lives in the untracked .env.test (see .env.test.example), not in
+// package.json, where it used to be committed. Variables already set, as in CI, win.
+config({ path: ".env.test" });
 
 export default defineConfig({
   test: {
