@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 import { invalidateUserDashboard } from "../../lib/cache";
+import { inSerializableTransaction } from "../../lib/serializable";
 
 export async function listCategories(userId: string) {
   const categories = await prisma.category.findMany({
@@ -47,9 +48,11 @@ export async function updateCategory(
   return result;
 }
 
-// Deleting a category re-homes its expenses/budgets to the user's "Other"
-// bucket (creating one if it somehow doesn't exist) instead of orphaning
-// or cascading, so past spending history is never silently lost.
+// Deleting a category re-homes its spending to the user's "Other" bucket
+// (creating one if it somehow doesn't exist) instead of orphaning or
+// cascading, so past spending history is never silently lost. The ledger
+// rows must move explicitly: `transactions.categoryId` is ON DELETE SET NULL,
+// and a SPEND with no category drops out of every breakdown and budget.
 export async function deleteCategory(userId: string, categoryId: string) {
   const category = await assertOwnership(userId, categoryId);
 
@@ -64,14 +67,21 @@ export async function deleteCategory(userId: string, categoryId: string) {
 
   const fallback = await getOrCreateOtherCategory(userId, categoryId);
 
-  await prisma.$transaction([
-    prisma.expense.updateMany({
+  // Serializable, retried: a SPEND written into this category mid-delete
+  // forces a retry, and the retry's fresh snapshot moves it too, rather than
+  // the FK silently nulling it.
+  await inSerializableTransaction(async (tx) => {
+    await tx.transaction.updateMany({
       where: { userId, categoryId },
       data: { categoryId: fallback.id },
-    }),
-    prisma.budget.deleteMany({ where: { userId, categoryId } }),
-    prisma.category.delete({ where: { id: categoryId } }),
-  ]);
+    });
+    await tx.expense.updateMany({
+      where: { userId, categoryId },
+      data: { categoryId: fallback.id },
+    });
+    await tx.budget.deleteMany({ where: { userId, categoryId } });
+    await tx.category.delete({ where: { id: categoryId } });
+  });
 
   invalidateUserDashboard(userId);
   return { movedTo: fallback.name };
