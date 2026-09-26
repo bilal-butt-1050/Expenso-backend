@@ -359,12 +359,12 @@ describe("LEDGER — precision", () => {
 
   it("LED-010: the largest numeric(14,2) amount stores and reads back exactly", async () => {
     const user = await makeUser();
-    const max = 99_999_999_999.99;
+    const max = 999_999_999_999.99;
 
     const t = await createTransaction(user.id, { kind: "EARN", amount: max, date: dateOf("2026-03-01"), source: "Big" });
 
     const row = await prisma.transaction.findUniqueOrThrow({ where: { id: t.id } });
-    expect(row.amount.toString()).toBe("99999999999.99");
+    expect(row.amount.toString()).toBe("999999999999.99");
     expect(t.amount).toBe(max);
     expect((await getDashboardSummary(user.id, "2026-03")).monthlyIncome).toBe(max);
   });
