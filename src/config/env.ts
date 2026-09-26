@@ -35,6 +35,21 @@ function requireJwtSecret(): string {
   return secret;
 }
 
+/**
+ * How many proxies sit in front of the API and append the caller's address to X-Forwarded-For
+ * (ARCH N4). 0, the default, means "trust no forwarded header": req.ip is the socket peer.
+ *
+ * Only ever an exact count, never `true`. With `true`, Express would take the left-most forwarded
+ * address, which the client chooses, and anyone could dodge the rate limits.
+ */
+export function parseTrustProxyHops(raw: string | undefined): number {
+  const value = raw?.trim() || "0";
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`TRUST_PROXY_HOPS must be a whole number of proxies (got "${value}")`);
+  }
+  return Number(value);
+}
+
 if (!process.env.BREVO_API_KEY || !process.env.MAIL_FROM_EMAIL) {
   console.warn("[env] BREVO_API_KEY or MAIL_FROM_EMAIL is not set: signup codes can't be emailed");
 }
@@ -47,6 +62,7 @@ export const env = {
   jwtSecret: requireJwtSecret(),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "30d",
   corsOrigin: process.env.CORS_ORIGIN ?? "*",
+  trustProxyHops: parseTrustProxyHops(process.env.TRUST_PROXY_HOPS),
   /** Brevo transactional email (D-17, D-21). Without it, OTP email is unavailable in production. */
   brevoApiKey: process.env.BREVO_API_KEY,
   /** The sender verified in Brevo. Brevo rewrites a free-mail sender to its own domain. */

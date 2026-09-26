@@ -18,6 +18,13 @@ import { transactionsRouter } from "./modules/transactions/transactions.routes";
 export function createApp() {
   const app = express();
 
+  // Behind the VPS's nginx, every request's socket peer is the proxy, so without this every client
+  // shares one rate-limit bucket. Set to the exact number of proxies that append X-Forwarded-For,
+  // and only once they really do (D-49): otherwise a client-supplied header would be trusted.
+  if (env.trustProxyHops > 0) {
+    app.set("trust proxy", env.trustProxyHops);
+  }
+
   app.use(helmet());
   app.use(cors({ origin: env.corsOrigin }));
   app.use(express.json());
