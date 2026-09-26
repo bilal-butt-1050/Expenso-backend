@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { getDashboardSummary } from "../src/modules/dashboard/dashboard.service";
 import { createLoan, settleLoan } from "../src/modules/loans/loans.service";
-import { createTransaction } from "../src/modules/transactions/transactions.service";
-import { makeUser, makeLoan, spend, earn, dateOf, categoryFor } from "./helpers/factories";
+import { createTransaction, deleteTransaction } from "../src/modules/transactions/transactions.service";
+import { makeUser, makeLoan, spend, earn, dateOf, categoryFor, currentMonth } from "./helpers/factories";
 
 /**
  * FIN — point-in-time accounting (P0).
@@ -249,5 +249,57 @@ describe("FIN — point-in-time accounting", () => {
     expect(byMonth.get("2026-07")).toBe(1_000);
     expect(byMonth.get("2026-08")).toBe(2_500);
     expect(byMonth.get("2026-08")).toBe(d.totalExpenses);
+  });
+});
+
+describe("FIN — the current month, future months and deletions", () => {
+  it("FIN-010: income dated later this month already counts in this month's figures (D-9: end of month)", async () => {
+    // The spec's other half, "excluded as of today", has no figure to test: D-9 measures every
+    // dashboard figure at the end of the selected month, and the API has no as-of-today value.
+    const user = await makeUser();
+    const now = currentMonth();
+    await earn(user.id, 3_000, now.day(1));
+    await earn(user.id, 7_000, now.day(now.lastDay));
+
+    const d = await getDashboardSummary(user.id, now.key);
+
+    expect(d.monthlyIncome).toBe(10_000);
+    expect(d.closingCash).toBe(10_000);
+  });
+
+  it("FIN-011: a future month shows today's cash, with no income or spending of its own", async () => {
+    const user = await makeUser();
+    const now = currentMonth();
+    await earn(user.id, 20_000, now.day(1));
+    await spend(user.id, 4_500, now.day(1));
+    const current = await getDashboardSummary(user.id, now.key);
+
+    const future = await getDashboardSummary(user.id, now.plusMonths(3));
+
+    expect(future.closingCash).toBe(current.closingCash);
+    expect(future.openingCash).toBe(current.closingCash);
+    expect(future.monthlyIncome).toBe(0);
+    expect(future.totalExpenses).toBe(0);
+  });
+
+  it("FIN-018: deleting a past transaction ripples into every later month", async () => {
+    const user = await makeUser();
+    const food = await categoryFor(user.id, "Food");
+    await earn(user.id, 10_000, dateOf("2026-06-01"));
+    const lunch = await createTransaction(user.id, { kind: "SPEND", amount: 3_000, date: dateOf("2026-06-15"), categoryId: food.id });
+
+    expect((await getDashboardSummary(user.id, "2026-08")).openingCash).toBe(7_000);
+
+    // Through the service, so every later month's cached dashboard must be invalidated too.
+    await deleteTransaction(user.id, lunch.id);
+
+    const june = await getDashboardSummary(user.id, "2026-06");
+    expect(june.totalExpenses).toBe(0);
+    expect(june.closingCash).toBe(10_000);
+    for (const month of ["2026-07", "2026-08", "2026-12"]) {
+      const d = await getDashboardSummary(user.id, month);
+      expect(d.openingCash, month).toBe(10_000);
+      expect(d.openingNetWorth, month).toBe(10_000);
+    }
   });
 });
