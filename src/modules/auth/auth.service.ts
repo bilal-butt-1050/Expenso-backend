@@ -305,6 +305,7 @@ function toPublicUser(user: {
   currency: string;
   timezone?: string;
   avatarUrl?: string | null;
+  createdAt?: Date;
 }) {
   return {
     id: user.id,
@@ -313,5 +314,8 @@ function toPublicUser(user: {
     currency: user.currency,
     timezone: user.timezone ?? DEFAULT_TIMEZONE,
     avatarUrl: user.avatarUrl ?? null,
+    // Lets the app tell a new account from an existing one on a new device (e.g. whether to show
+    // the first-run tour). Additive: older app builds ignore it.
+    createdAt: user.createdAt?.toISOString() ?? null,
   };
 }
