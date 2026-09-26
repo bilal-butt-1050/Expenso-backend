@@ -109,3 +109,25 @@ export async function makeLoan(opts: {
 }
 
 export const money = (v: number | string) => new Prisma.Decimal(v);
+
+/** Adds `n` months to a `YYYY-MM` key. */
+export function addMonths(key: string, n: number): string {
+  const [y, m] = key.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1 + n, 1));
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * The real current month in the fixtures' zone, for code that stamps rows with "now" (a new loan
+ * and its opening movement). `day(d)` is noon on day d of it; `plusMonths(n)` is a later month key.
+ */
+export function currentMonth() {
+  const key = monthKeyInZone(new Date(), "Asia/Karachi");
+  const [y, m] = key.split("-").map(Number);
+  return {
+    key,
+    lastDay: new Date(Date.UTC(y, m, 0)).getUTCDate(),
+    day: (d: number) => dateOf(`${key}-${String(d).padStart(2, "0")}`),
+    plusMonths: (n: number) => addMonths(key, n),
+  };
+}

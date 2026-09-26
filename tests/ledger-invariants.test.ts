@@ -260,3 +260,149 @@ describe("LEDGER — money invariants", () => {
     }
   });
 });
+
+describe("LEDGER — loans move cash, not net worth", () => {
+  it("LED-003: lending X lowers cash by X, leaves net worth alone, and adds X to what's lent", async () => {
+    const user = await makeUser();
+    await earn(user.id, 50_000, dateOf("2026-03-01"));
+    const before = await getDashboardSummary(user.id, "2026-12");
+
+    await createLoan(user.id, { type: "LENT", personName: "Ahmed", amount: 12_345.67 });
+
+    const after = await getDashboardSummary(user.id, "2026-12");
+    expect(after.cashOnHand).toBe(before.cashOnHand - 12_345.67);
+    expect(after.netWorth).toBe(before.netWorth);
+    expect(after.netDebtSnapshot.totalLent).toBe(before.netDebtSnapshot.totalLent + 12_345.67);
+  });
+
+  it("LED-004: borrowing X raises cash by X, leaves net worth alone, and adds X to what's owed", async () => {
+    const user = await makeUser();
+    await earn(user.id, 5_000, dateOf("2026-03-01"));
+    const before = await getDashboardSummary(user.id, "2026-12");
+
+    await createLoan(user.id, { type: "BORROWED", personName: "Bank", amount: 8_000.5 });
+
+    const after = await getDashboardSummary(user.id, "2026-12");
+    expect(after.cashOnHand).toBe(before.cashOnHand + 8_000.5);
+    expect(after.netWorth).toBe(before.netWorth);
+    expect(after.netDebtSnapshot.totalBorrowed).toBe(before.netDebtSnapshot.totalBorrowed + 8_000.5);
+  });
+
+  it("LED-006: net worth = cash + outstanding lent − outstanding borrowed, from the rows themselves", async () => {
+    const user = await makeUser();
+    await earn(user.id, 90_000, dateOf("2026-02-01"));
+    const lent = await createLoan(user.id, { type: "LENT", personName: "A", amount: 20_000 });
+    const owed = await createLoan(user.id, { type: "BORROWED", personName: "B", amount: 15_000 });
+    await createLoan(user.id, { type: "LENT", personName: "C", amount: 4_000, recordCashflow: false });
+    await settleLoan(user.id, lent.id, 7_500);
+    await settleLoan(user.id, owed.id, 2_000);
+
+    const loans = await prisma.loan.findMany({ where: { userId: user.id } });
+    const outstanding = (type: "LENT" | "BORROWED") =>
+      loans
+        .filter((l) => l.type === type)
+        .reduce((t, l) => t.add(l.amount.sub(l.settledAmount)), new Prisma.Decimal(0))
+        .toNumber();
+
+    const d = await getDashboardSummary(user.id, "2026-12");
+    expect(d.netWorth).toBe(
+      new Prisma.Decimal(await cashFromLedger(user.id)).add(outstanding("LENT")).sub(outstanding("BORROWED")).toNumber()
+    );
+    expect(d.netDebtSnapshot.totalLent).toBe(outstanding("LENT"));
+    expect(d.netDebtSnapshot.totalBorrowed).toBe(outstanding("BORROWED"));
+  });
+
+  it("LED-018: recordCashflow false writes the loan but no opening movement", async () => {
+    const user = await makeUser();
+
+    const loan = await createLoan(user.id, { type: "BORROWED", personName: "Old debt", amount: 3_000, recordCashflow: false });
+
+    expect(await prisma.loan.count({ where: { id: loan.id } })).toBe(1);
+    expect(await prisma.transaction.count({ where: { loanId: loan.id } })).toBe(0);
+    expect(await cashFromLedger(user.id)).toBe(0);
+  });
+
+  it("LED-024: renaming a counterparty rewrites the descriptions of all its movements", async () => {
+    const user = await makeUser();
+    await earn(user.id, 10_000, dateOf("2026-03-01"));
+    const loan = await createLoan(user.id, { type: "LENT", personName: "Ali", amount: 1_000 });
+    await settleLoan(user.id, loan.id, 200);
+
+    await updateLoan(user.id, loan.id, { personName: "  Ali Khan " });
+
+    const descriptions = (await prisma.transaction.findMany({ where: { loanId: loan.id }, orderBy: { kind: "asc" } }))
+      .map((t) => `${t.kind}: ${t.description}`)
+      .sort();
+    expect(descriptions).toEqual(["COLLECT: Repayment from Ali Khan", "LEND_OUT: Lent to Ali Khan"]);
+  });
+
+  it("LED-027: a loan of zero can't be created", async () => {
+    const user = await makeUser();
+
+    const err = await createLoan(user.id, { type: "LENT", personName: "Nobody", amount: 0 }).catch((e) => e);
+
+    expect(err.statusCode).toBe(400);
+    expect(await prisma.loan.count({ where: { userId: user.id } })).toBe(0);
+    expect(await prisma.transaction.count({ where: { userId: user.id } })).toBe(0);
+  });
+});
+
+describe("LEDGER — precision", () => {
+  it("LED-009: 0.005 rounds to 0.01 as numeric(14,2) does, never truncating to zero", async () => {
+    const user = await makeUser();
+
+    const t = await createTransaction(user.id, { kind: "EARN", amount: 0.005, date: dateOf("2026-03-01"), source: "Tip" });
+
+    const row = await prisma.transaction.findUniqueOrThrow({ where: { id: t.id } });
+    expect(row.amount.toString()).toBe("0.01");
+  });
+
+  it("LED-010: the largest numeric(14,2) amount stores and reads back exactly", async () => {
+    const user = await makeUser();
+    const max = 99_999_999_999.99;
+
+    const t = await createTransaction(user.id, { kind: "EARN", amount: max, date: dateOf("2026-03-01"), source: "Big" });
+
+    const row = await prisma.transaction.findUniqueOrThrow({ where: { id: t.id } });
+    expect(row.amount.toString()).toBe("99999999999.99");
+    expect(t.amount).toBe(max);
+    expect((await getDashboardSummary(user.id, "2026-03")).monthlyIncome).toBe(max);
+  });
+});
+
+describe("LEDGER — concurrency", () => {
+  it("LED-017: concurrent partial settlements totalling more than what's left never over-settle", async () => {
+    const user = await makeUser();
+    await earn(user.id, 1_000, dateOf("2026-03-01"));
+    const loan = await createLoan(user.id, { type: "LENT", personName: "Many", amount: 100 });
+
+    const results = await Promise.allSettled(Array.from({ length: 5 }, () => settleLoan(user.id, loan.id, 30)));
+
+    for (const r of results) {
+      if (r.status === "rejected") expect([400, 409]).toContain((r.reason as { statusCode?: number }).statusCode);
+    }
+    const fresh = await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } });
+    const collected = (await prisma.transaction.findMany({ where: { loanId: loan.id, kind: "COLLECT" } }))
+      .reduce((t, r) => t.add(r.amount), new Prisma.Decimal(0));
+    expect(fresh.settledAmount.lessThanOrEqualTo(100)).toBe(true);
+    expect(collected.toString(), "every settled paisa has exactly one cash movement").toBe(fresh.settledAmount.toString());
+  });
+
+  it("LED-028: settling and deleting the same loan at once leaves no orphaned movements", async () => {
+    const user = await makeUser();
+    await earn(user.id, 50_000, dateOf("2026-03-01"));
+
+    for (let i = 0; i < 10; i++) {
+      const loan = await createLoan(user.id, { type: "LENT", personName: `Race ${i}`, amount: 1_000 });
+      await Promise.allSettled([settleLoan(user.id, loan.id, 400), deleteLoan(user.id, loan.id)]);
+    }
+
+    const orphans = await prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT count(*) AS n FROM "transactions" t
+      LEFT JOIN "loans" l ON l."id" = t."loanId"
+      WHERE t."loanId" IS NOT NULL AND l."id" IS NULL`;
+    expect(Number(orphans[0].n)).toBe(0);
+    // Whatever order they landed in, what's reported still matches the rows.
+    expect((await getDashboardSummary(user.id, "2026-12")).cashOnHand).toBe(await cashFromLedger(user.id));
+  });
+});
