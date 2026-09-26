@@ -5,7 +5,7 @@ import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
 import { isValidMonthKey } from "../../utils/date";
 import {
-  createTransaction,
+  createOrReplayTransaction,
   deleteTransaction,
   listTransactions,
   updateTransaction,
@@ -23,7 +23,9 @@ const KINDS = [
   "REPAY",
 ] as const satisfies readonly TransactionKind[];
 
-const createSchema = z.object({
+export const createSchema = z.object({
+  /** Optional client-generated id, for idempotent offline replay (ARCH N7.3). */
+  id: z.string().uuid().optional(),
   kind: z.enum(["SPEND", "EARN"]),
   amount: z.number().positive(),
   date: z.coerce.date(),
@@ -38,7 +40,8 @@ const createSchema = z.object({
   sourceColor: z.string().max(20).optional(),
 });
 
-const updateSchema = createSchema.partial().omit({ kind: true });
+// An id is fixed at creation; PATCH can never change it.
+export const updateSchema = createSchema.partial().omit({ kind: true, id: true });
 
 const listSchema = z.object({
   month: z.string().refine(isValidMonthKey, "month must be in YYYY-MM format").optional(),
@@ -65,7 +68,9 @@ transactionsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
     const body = createSchema.parse(req.body);
-    res.status(201).json(await createTransaction(req.userId!, body));
+    const { transaction, replayed } = await createOrReplayTransaction(req.userId!, body);
+    // 200 for a replay of a row that already exists, 201 when this request created it.
+    res.status(replayed ? 200 : 201).json(transaction);
   })
 );
 
