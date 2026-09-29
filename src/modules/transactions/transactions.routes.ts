@@ -22,6 +22,8 @@ const KINDS = [
   "COLLECT",
   "BORROW_IN",
   "REPAY",
+  "ADJUST_IN",
+  "ADJUST_OUT",
 ] as const satisfies readonly TransactionKind[];
 
 export const createSchema = z.object({

@@ -14,6 +14,7 @@ import { budgetsRouter } from "./modules/budgets/budgets.routes";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes";
 import { loansRouter } from "./modules/loans/loans.routes";
 import { transactionsRouter } from "./modules/transactions/transactions.routes";
+import { balanceRouter } from "./modules/balance/balance.routes";
 
 export function createApp() {
   const app = express();
@@ -64,6 +65,7 @@ export function createApp() {
   app.use("/dashboard", dashboardRouter);
   app.use("/loans", loansRouter);
   app.use("/transactions", transactionsRouter);
+  app.use("/balance", balanceRouter);
 
 
   app.use(notFoundHandler);

@@ -30,6 +30,9 @@ model User {
   // When this account proved it owns its email address (a consumed signup code, or Google).
   // NULL = never proven, which decides what a later Google sign-in may do (D-19, D-22).
   emailVerifiedAt DateTime?
+  // The last time the user said what they actually hold (POST /balance), even when no correction
+  // was needed. NULL = never, which is when Home asks them to set it (D-55).
+  balanceSetAt    DateTime?
   createdAt       DateTime  @default(now())
 
   categories   Category[]
@@ -195,6 +198,12 @@ model Loan {
 ///   COLLECT     +           no                   no                 yes
 ///   BORROW_IN   +           no                   no                 yes
 ///   REPAY       −           no                   no                 yes
+///   ADJUST_IN   +           no                   no                 no
+///   ADJUST_OUT  −           no                   no                 no
+///
+/// ADJUST_* are balance corrections (D-55): the difference between what the user says they hold
+/// and what the ledger adds up to. They move cash and net worth, never income, spending or a
+/// budget, and are deleted rather than edited.
 ///
 /// Cash on hand sums every kind. Budgets and category analytics read SPEND only, so lending a
 /// large sum no longer detonates a budget — a transfer is not an expense.
@@ -205,6 +214,8 @@ enum TransactionKind {
   COLLECT
   BORROW_IN
   REPAY
+  ADJUST_IN
+  ADJUST_OUT
 }
 
 model Transaction {

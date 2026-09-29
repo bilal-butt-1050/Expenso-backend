@@ -13,6 +13,7 @@ import { expensesRouter } from "../src/modules/expenses/expenses.routes";
 import { incomeRouter } from "../src/modules/income/income.routes";
 import { loansRouter } from "../src/modules/loans/loans.routes";
 import { transactionsRouter } from "../src/modules/transactions/transactions.routes";
+import { balanceRouter } from "../src/modules/balance/balance.routes";
 import { makeUser, makeTransaction, makeLoan, categoryFor, dateOf } from "./helpers/factories";
 
 /**
@@ -108,6 +109,7 @@ const leaks = (text: string, markers: string[]) => markers.filter((m) => text.in
  */
 const READS = [
   "GET /auth/me",
+  "GET /balance/",
   "GET /budgets/",
   "GET /categories/",
   "GET /dashboard/summary",
@@ -144,14 +146,16 @@ const SELF_OR_PUBLIC = [
   "POST /auth/google",
   "PATCH /auth/profile",
   "PATCH /auth/password",
+  // Sets the caller's own balance: there is no id to point at someone else's (BAL-007).
+  "POST /balance/",
 ];
 
 describe("route coverage", () => {
-  it("every mounted route is classified for the ownership tests (35 endpoints)", () => {
+  it("every mounted route is classified for the ownership tests (37 endpoints)", () => {
     const mounted: [string, Router][] = [
       ["/auth", authRouter], ["/budgets", budgetsRouter], ["/categories", categoriesRouter],
       ["/dashboard", dashboardRouter], ["/expenses", expensesRouter], ["/income", incomeRouter],
-      ["/loans", loansRouter], ["/transactions", transactionsRouter],
+      ["/loans", loansRouter], ["/transactions", transactionsRouter], ["/balance", balanceRouter],
     ];
     const actual = mounted.flatMap(([prefix, router]) =>
       router.stack
@@ -164,7 +168,7 @@ describe("route coverage", () => {
     const classified = [...READS, ...MUTATIONS_BY_ID, ...CREATES, ...SELF_OR_PUBLIC];
 
     expect(actual.sort()).toEqual(classified.sort());
-    expect(actual).toHaveLength(35);
+    expect(actual).toHaveLength(37);
   });
 });
 
@@ -178,6 +182,7 @@ describe("OWN-001: A cannot read B's data", () => {
 
   const readPaths = [
     "/auth/me",
+    "/balance",
     `/budgets?month=${MONTH}`,
     "/categories",
     `/dashboard/summary?month=${MONTH}`,

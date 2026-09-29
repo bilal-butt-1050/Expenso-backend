@@ -18,7 +18,7 @@ const ofKind = (rows: Row[], ...kinds: TransactionKind[]) =>
  *
  * Reads the unified ledger, which is what makes the headline numbers honest:
  * - spending and budgets count SPEND only, so lending money no longer blows a budget;
- * - cash on hand sums all six kinds, so lending and collecting nets to zero;
+ * - cash on hand sums every kind (including balance corrections), so lending and collecting nets to zero;
  * - net worth folds in what is still owed in each direction.
  */
 export async function getDashboardSummary(userId: string, month: string): Promise<DashboardSummary> {
@@ -185,6 +185,12 @@ async function buildDashboardSummary(userId: string, month: string) {
   const totalBudgeted = budgets.reduce((t, b) => t.add(b.amount), money(0));
   const plannedSavings = clampPositive(subtract(monthlyIncome, totalBudgeted));
 
+  // "Can still spend" (R-24, D-55): measured against the month's budgets when they total more than
+  // zero, otherwise against its income. All spending counts, including unbudgeted categories.
+  // Signed, never clamped: an overspent month must read negative.
+  const spendableBasis: "budget" | "income" = totalBudgeted.greaterThan(0) ? "budget" : "income";
+  const spendableLimit = spendableBasis === "budget" ? totalBudgeted : monthlyIncome;
+
   // --- per-category ---------------------------------------------------------------------
   const spendRows = ofKind(monthRows, "SPEND");
   const spentByCategory = new Map<string, Prisma.Decimal>();
@@ -282,6 +288,12 @@ async function buildDashboardSummary(userId: string, month: string) {
     plannedSavings: toNumber(plannedSavings),
     rolloverSavings: toNumber(rolloverSavings),
     totalBudgeted: toNumber(totalBudgeted),
+    spendable: {
+      basis: spendableBasis,
+      limit: toNumber(spendableLimit),
+      spent: toNumber(totalExpenses),
+      left: toNumber(subtract(spendableLimit, totalExpenses)),
+    },
 
     // Pacing
     dailyAllowance,

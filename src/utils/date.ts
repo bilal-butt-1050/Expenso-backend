@@ -30,6 +30,46 @@ export function monthKeyInZone(date: Date, timeZone: string = DEFAULT_TIMEZONE):
   return toMonthKey(date);
 }
 
+/**
+ * The instant the user's *tomorrow* begins: midnight at the start of the next calendar day in
+ * `timeZone`, as a UTC Date.
+ *
+ * "Up to now" is the wrong cutoff for a balance: the app saves a picked day at 12:00 local, so an
+ * expense dated today would not count until noon (D-55).
+ */
+export function startOfTomorrowInZone(now: Date, timeZone: string = DEFAULT_TIMEZONE): Date {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const part = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  // Local midnight of tomorrow, first read as if it were UTC, then shifted by the zone's offset at
+  // that instant. Checked twice, so a DST change around midnight lands on the right side.
+  const wallClock = Date.UTC(part("year"), part("month") - 1, part("day") + 1);
+  let instant = wallClock - zoneOffsetMs(new Date(wallClock), timeZone);
+  instant = wallClock - zoneOffsetMs(new Date(instant), timeZone);
+  return new Date(instant);
+}
+
+/** How far `timeZone`'s wall clock is ahead of UTC at `date`, in milliseconds. */
+function zoneOffsetMs(date: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(date);
+  const part = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  const asUtc = Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second"));
+  return asUtc - Math.floor(date.getTime() / 1000) * 1000;
+}
+
 /** UTC month key. Prefer `monthKeyInZone` for anything a user will see. */
 export function toMonthKey(date: Date | string): string {
   if (typeof date === "string") {

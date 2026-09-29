@@ -4,6 +4,7 @@ import { prisma } from "../src/lib/prisma";
 import { AppError } from "../src/utils/asyncHandler";
 import { monthKeyInZone } from "../src/utils/date";
 import { getDashboardSummary } from "../src/modules/dashboard/dashboard.service";
+import { getBalance, setBalance } from "../src/modules/balance/balance.service";
 import { createLoan, settleLoan, updateLoan, deleteLoan } from "../src/modules/loans/loans.service";
 import {
   createTransaction,
@@ -116,6 +117,13 @@ async function randomHistory(opts: {
       if (!loans.length) return;
       await deleteLoan(user.id, loans.splice(r.int(0, loans.length - 1), 1)[0]);
     }],
+    [6, async () => {
+      // "Update" on Home: say you hold a little more or less than the ledger adds up to (D-55).
+      const { cash } = await getBalance(user.id);
+      const target = D(cash).add(r.next() < 0.5 ? r.amount() : -r.amount()).toNumber();
+      await setBalance(user.id, target);
+      expect((await getBalance(user.id)).cash, `seed ${opts.seed}: Update lands on its target`).toBe(target);
+    }],
   ];
   const totalWeight = ops.reduce((t, [w]) => t + w, 0);
 
@@ -208,8 +216,16 @@ describe("property tests", () => {
           previousClosing = d.closingCash;
           // FIN-006: opening cash plus this month's movements is the closing cash.
           expect(D(d.openingCash).add(d.netCashThisMonth).toNumber(), `FIN-006 ${at}`).toBe(d.closingCash);
-          // FIN-007: opening net worth plus savings is closing net worth.
-          expect(D(d.openingNetWorth).add(d.savingsThisMonth).toNumber(), `FIN-007 ${at}`).toBe(d.closingNetWorth);
+          // FIN-007, restated for corrections (D-55): opening net worth + savings + the month's net
+          // corrections is closing net worth.
+          const adjust = await prisma.transaction.findMany({
+            where: { userId, month, kind: { in: ["ADJUST_IN", "ADJUST_OUT"] } },
+            select: { kind: true, amount: true },
+          });
+          const netCorrections = adjust.reduce((t, a) => t.add(a.amount.mul(CASH_SIGN[a.kind])), ZERO);
+          expect(D(d.openingNetWorth).add(d.savingsThisMonth).add(netCorrections).toNumber(), `FIN-007 ${at}`).toBe(
+            d.closingNetWorth
+          );
         }
       },
     });

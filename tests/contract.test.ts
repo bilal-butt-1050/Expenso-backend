@@ -43,7 +43,7 @@ const Category = z.object({
 
 const Budget = z.object({ categoryId: z.string().uuid(), category: Category, amount: money });
 
-const TransactionKind = z.enum(["SPEND", "EARN", "LEND_OUT", "COLLECT", "BORROW_IN", "REPAY"]);
+const TransactionKind = z.enum(["SPEND", "EARN", "LEND_OUT", "COLLECT", "BORROW_IN", "REPAY", "ADJUST_IN", "ADJUST_OUT"]);
 const Transaction = z.object({
   id: z.string().uuid(),
   kind: TransactionKind,
@@ -109,6 +109,7 @@ const DashboardSummary = z.object({
   plannedSavings: money,
   rolloverSavings: money,
   totalBudgeted: money,
+  spendable: z.object({ basis: z.enum(["budget", "income"]), limit: money, spent: money, left: money }),
   dailyAllowance: money,
   daysRemaining: z.number().int(),
   daysInMonth: z.number().int(),
@@ -172,6 +173,20 @@ const Income = z.object({
   paymentMethod: z.string(),
 });
 const IncomeSummary = z.object({ month: monthKey, totalIncome: money });
+const Balance = z.object({
+  cash: money,
+  asOf: isoDate,
+  balanceSetAt: isoDate.nullable(),
+  breakdown: z.object({
+    income: money,
+    spending: money,
+    lentOut: money,
+    collected: money,
+    borrowed: money,
+    repaid: money,
+    corrections: money,
+  }),
+});
 /** The legacy lists are pages, as the pre-ledger app's `api/expenses.ts` and `api/income.ts` read them. */
 const legacyPage = (item: z.ZodTypeAny) => z.object({ items: z.array(item).min(1), hasMore: z.boolean() });
 
@@ -341,11 +356,17 @@ describe("CON-001: every endpoint the app calls returns the shape the app reads"
     expectShape(z.array(Loan).min(1), (await call("GET", "/loans", { token })).json, "GET /loans");
     expectShape(LoansSummary, (await call("GET", "/loans/summary", { token })).json, "GET /loans/summary");
 
-    // The loan's movements are in the list too, so the row shape is checked for those kinds as well.
+    const balance = await call("GET", "/balance", { token });
+    expectShape(Balance, balance.json, "GET /balance");
+    const corrected = await call("POST", "/balance", { token, body: { amount: balance.json.cash + 1_000 } });
+    expect(corrected.status).toBe(200);
+    expectShape(Balance, corrected.json, "POST /balance");
+
+    // Loan movements and the correction are in the list too, so the row shape is checked for them.
     const page = await call("GET", `/transactions?month=${month.key}`, { token });
     expectShape(TransactionPage, page.json, "GET /transactions");
     expect(new Set(page.json.items.map((t: { kind: string }) => t.kind))).toEqual(
-      new Set(["SPEND", "EARN", "LEND_OUT", "COLLECT"])
+      new Set(["SPEND", "EARN", "LEND_OUT", "COLLECT", "ADJUST_IN"])
     );
 
     const dashboard = await call("GET", `/dashboard/summary?month=${month.key}`, { token });

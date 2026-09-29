@@ -19,6 +19,9 @@ export type ManualKind = (typeof MANUAL_KINDS)[number];
 /** Kinds owned by a loan — never created or deleted on their own. */
 export const LOAN_KINDS: TransactionKind[] = ["LEND_OUT", "COLLECT", "BORROW_IN", "REPAY"];
 
+/** Balance corrections (D-55): written only by POST /balance, deleted but never edited. */
+export const ADJUST_KINDS: TransactionKind[] = ["ADJUST_IN", "ADJUST_OUT"];
+
 /** Which direction each kind moves cash. */
 export const CASH_SIGN: Record<TransactionKind, 1 | -1> = {
   SPEND: -1,
@@ -27,6 +30,8 @@ export const CASH_SIGN: Record<TransactionKind, 1 | -1> = {
   COLLECT: 1,
   BORROW_IN: 1,
   REPAY: -1,
+  ADJUST_IN: 1,
+  ADJUST_OUT: -1,
 };
 
 export interface CreateTransactionInput {
@@ -264,6 +269,10 @@ export async function updateTransaction(
   input: Partial<CreateTransactionInput>
 ) {
   const existing = await assertManualTransaction(userId, id);
+  // Corrections are deleted, never edited: a new Update records the right difference (D-55).
+  if (ADJUST_KINDS.includes(existing.kind)) {
+    throw new AppError(409, "A balance correction can't be edited. Delete it, or use Update on Home.");
+  }
 
   if (input.categoryId) await assertCategoryOwnership(userId, input.categoryId);
 
