@@ -1,3 +1,4 @@
+import { invalidateUserDashboard } from "../src/lib/cache";
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { AddressInfo } from "net";
 import { Server } from "http";
@@ -51,7 +52,7 @@ const tokenFor = (userId: string) => signToken({ userId, tv: 0 });
 
 // ------------------------------------------------------------------------------------ OPN
 describe("OPN: opening cash", () => {
-  it("OPN-001: it lifts every month's cash and net worth by the same amount, and nothing else", async () => {
+  it("OPN-001: it lifts cash and net worth by the same amount from the first month on, and nothing else", async () => {
     const plain = await makeUser();
     const withOpening = await makeUser();
     for (const user of [plain, withOpening]) {
@@ -66,8 +67,10 @@ describe("OPN: opening cash", () => {
     for (const month of ["2026-07", "2026-08", "2026-09"]) {
       const a = await getDashboardSummary(plain.id, month);
       const b = await getDashboardSummary(withOpening.id, month);
+      // The first entry is in August: July is before the user started, so it has none of it (D-65b).
+      const lift = month >= "2026-08" ? 10_000 : 0;
       for (const field of ["openingCash", "closingCash", "cashOnHand", "netWorth", "openingNetWorth", "closingNetWorth"] as const) {
-        expect(b[field], `${month} ${field}`).toBe(a[field] + 10_000);
+        expect(b[field], `${month} ${field}`).toBe(a[field] + lift);
       }
       expect(b.monthlyIncome).toBe(a.monthlyIncome);
       expect(b.totalExpenses).toBe(a.totalExpenses);
@@ -89,13 +92,17 @@ describe("OPN: opening cash", () => {
     let previousClosing: number | null = null;
     for (const month of ["2026-05", "2026-06", "2026-07", "2026-08"]) {
       const d = await getDashboardSummary(user.id, month);
-      if (previousClosing !== null) expect(d.openingCash, month).toBe(previousClosing);
+      // June is the first month with an entry: it opens with the opening amount (D-65b).
+      const added = month === "2026-06" ? 7_500 : 0;
+      if (previousClosing !== null) expect(d.openingCash, month).toBe(previousClosing + added);
       expect(d.openingCash + d.netCashThisMonth, month).toBe(d.closingCash);
       expect(d.openingNetWorth + d.savingsThisMonth, month).toBe(d.closingNetWorth);
       previousClosing = d.closingCash;
     }
     expect((await getDashboardSummary(user.id, "2026-08")).netWorth).toBe(7_500 + 30_000 - 4_000 - 1_000);
-    expect((await getDashboardSummary(user.id, "2026-05")).openingCash).toBe(7_500); // FIN-012 restated
+    // Before the user started there was nothing (D-65b); from the first month on, it's all there.
+    expect((await getDashboardSummary(user.id, "2026-05")).closingCash).toBe(0);
+    expect((await getDashboardSummary(user.id, "2026-06")).openingCash).toBe(7_500);
   });
 
   it("OPN-003: entering today's money makes today's Cash available exactly that; it's set once (D-64)", async () => {
@@ -146,19 +153,44 @@ describe("OPN: opening cash", () => {
     expect((await prisma.user.findUniqueOrThrow({ where: { id: other.id } })).openingBalance).toBeNull();
   });
 
-  it("OPN-005: null until set, as null; after setting, every cached month reflects it", async () => {
+  it("OPN-005: null until set, as null; after setting, every cached month from the start reflects it", async () => {
+    pinClock(SEP_15_0900_PKT);
     const user = await makeUser();
+    await prisma.user.update({ where: { id: user.id }, data: { createdAt: pkt("2026-09-10T12:00:00") } });
     const token = tokenFor(user.id);
     expect((await call(token, "GET", "/auth/me")).json.openingBalance).toBeNull();
-    const aug = await getDashboardSummary(user.id, "2026-08");
-    expect(aug.cashAvailable.openingBalance).toBeNull();
+    const sep = await getDashboardSummary(user.id, "2026-09");
+    const oct = await getDashboardSummary(user.id, "2026-10");
+    expect(sep.cashAvailable.openingBalance).toBeNull();
 
     await call(token, "PUT", "/opening-balance", { cashToday: 12_000 });
 
     expect((await call(token, "GET", "/auth/me")).json.openingBalance).toBe(12_000);
-    const augAfter = await getDashboardSummary(user.id, "2026-08");
-    expect(augAfter.closingCash).toBe(aug.closingCash + 12_000);
-    expect(augAfter.cashAvailable.openingBalance).toBe(12_000);
+    // Cached months are refreshed, from the account's month on.
+    expect((await getDashboardSummary(user.id, "2026-09")).closingCash).toBe(sep.closingCash + 12_000);
+    expect((await getDashboardSummary(user.id, "2026-10")).closingCash).toBe(oct.closingCash + 12_000);
+    expect((await getDashboardSummary(user.id, "2026-09")).cashAvailable.openingBalance).toBe(12_000);
+  });
+
+  it("OPN-006: a new user's money today isn't back-filled into the months before they joined (D-65b)", async () => {
+    pinClock(SEP_15_0900_PKT);
+    const user = await makeUser();
+    await prisma.user.update({ where: { id: user.id }, data: { createdAt: pkt("2026-09-15T08:00:00") } });
+    await call(tokenFor(user.id), "PUT", "/opening-balance", { cashToday: 25_000 });
+
+    expect((await getDashboardSummary(user.id, "2026-09")).cashAvailable.amount).toBe(25_000);
+    for (const month of ["2026-06", "2026-07", "2026-08"]) {
+      const d = await getDashboardSummary(user.id, month);
+      expect(d.cashAvailable.amount, month).toBe(0);
+      expect(d.cashOnHand, month).toBe(0);
+      expect(d.netWorth, month).toBe(0);
+    }
+
+    // A backdated entry moves the start to its month: that month now counts the amount too.
+    await spend(user.id, 2_000, dateOf("2026-08-20"));
+    invalidateUserDashboard(user.id); // the factory writes directly; the API would clear it
+    expect((await getDashboardSummary(user.id, "2026-08")).cashOnHand).toBe(25_000 - 2_000);
+    expect((await getDashboardSummary(user.id, "2026-07")).cashOnHand).toBe(0);
   });
 });
 
