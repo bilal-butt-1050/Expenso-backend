@@ -27,3 +27,15 @@ export const movementDateSchema = z
 
 /** A money amount that may be zero (a budget of nothing). */
 export const nonNegativeAmountSchema = z.number().finite().min(0).max(MAX_AMOUNT, "Amount is too large");
+
+/**
+ * An email address as every auth route takes it: trimmed, lowercased, at most 254 characters (the
+ * longest a real address can be), and a valid address.
+ */
+export const emailSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .max(254, "That email is too long")
+  .email("Please provide a valid email address");
+
