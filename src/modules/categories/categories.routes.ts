@@ -10,7 +10,7 @@ categoriesRouter.use(requireAuth);
 const hexColor = z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Must be a hex color like #00E676");
 
 const createSchema = z.object({
-  name: z.string().min(1).max(30),
+  name: z.string().trim().min(1).max(30),
   icon: z.string().min(1).max(40).optional(),
   color: hexColor.optional(),
 });

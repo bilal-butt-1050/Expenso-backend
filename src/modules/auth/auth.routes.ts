@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { emailSchema } from "../../utils/validation";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
 import { isValidTimeZone } from "../../utils/date";
@@ -9,7 +10,7 @@ import { generateAndSendOtp } from "./otp.service";
 export const authRouter = Router();
 
 const sendOtpSchema = z.object({
-  email: z.string().trim().toLowerCase().email("Please provide a valid email address"),
+  email: emailSchema,
 });
 
 /**
@@ -19,19 +20,20 @@ const sendOtpSchema = z.object({
  * The empty-string escape hatch is gone — a blank code is now a validation error, not a bypass.
  */
 const registerSchema = z.object({
-  email: z.string().trim().toLowerCase().email("Please provide a valid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
-  name: z.string().trim().min(1, "Name is required"),
+  email: emailSchema,
+  // Capped: bcrypt reads only the first 72 bytes, and an unbounded string is free work for an attacker.
+  password: z.string().min(8, "Password must be at least 8 characters").max(200, "Password is too long"),
+  name: z.string().trim().min(1, "Name is required").max(80, "Name is too long"),
   otp: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code sent to your email").optional(),
 });
 
 const loginSchema = z.object({
-  email: z.string().trim().toLowerCase().email("Please provide a valid email address"),
-  password: z.string().min(1, "Password is required"),
+  email: emailSchema,
+  password: z.string().min(1, "Password is required").max(200, "Password is too long"),
 });
 
 const googleSchema = z.object({
-  idToken: z.string().min(1),
+  idToken: z.string().min(1).max(4096),
 });
 
 /**

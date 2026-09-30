@@ -21,7 +21,7 @@ loansRouter.use(requireAuth);
 
 const createLoanSchema = z.object({
   type: z.enum(["LENT", "BORROWED"]),
-  personName: z.string().trim().min(1, "Person or institution name is required"),
+  personName: z.string().trim().min(1, "Person or institution name is required").max(80, "Name is too long"),
   amount: amountSchema(),
   dueDate: z.string().datetime().optional().nullable(),
   notes: z.string().trim().max(500).optional().nullable(),
@@ -38,7 +38,7 @@ const settleLoanSchema = z.object({
 });
 
 const updateLoanSchema = z.object({
-  personName: z.string().trim().min(1).optional(),
+  personName: z.string().trim().min(1).max(80, "Name is too long").optional(),
   amount: amountSchema().optional(),
   dueDate: z.string().datetime().optional().nullable(),
   notes: z.string().trim().max(500).optional().nullable(),
