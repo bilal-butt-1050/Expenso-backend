@@ -229,6 +229,26 @@ describe("MIG — the unified ledger migration, on data in the old shape", () =>
     }
   });
 
+  it("MIG-014: loans.date is backfilled from the opening movement, and an insert without it still works", async () => {
+    const loans = await db.client.$queryRawUnsafe<{ id: string; date: Date; opening: Date | null; createdAt: Date }[]>(`
+      SELECT l."id", l."date", l."createdAt",
+             (SELECT t."date" FROM "transactions" t
+              WHERE t."loanId" = l."id" AND t."kind" IN ('LEND_OUT', 'BORROW_IN')
+              ORDER BY t."date" LIMIT 1) AS opening
+      FROM "loans" l`);
+    expect(loans.length).toBe(LOANS.length);
+    for (const l of loans) {
+      expect(l.date.toISOString(), l.id).toBe((l.opening ?? l.createdAt).toISOString());
+    }
+    // What the previous backend image does after this deploys: it doesn't know the column.
+    await db.client.$executeRawUnsafe(
+      `INSERT INTO "loans" ("id", "userId", "type", "personName", "amount", "updatedAt") VALUES ('l-old-client', 'u1', 'LENT', 'Old', 10, now())`
+    );
+    const [inserted] = await db.client.$queryRawUnsafe<{ date: Date | null }[]>(`SELECT "date" FROM "loans" WHERE "id" = 'l-old-client'`);
+    expect(inserted.date).not.toBeNull();
+    await db.client.$executeRawUnsafe(`DELETE FROM "loans" WHERE "id" = 'l-old-client'`);
+  });
+
   it("MIG-013: a user with no transactions migrates cleanly", async () => {
     const [u2] = await db.client.$queryRawUnsafe<{ timezone: string; tokenVersion: number }[]>(
       `SELECT "timezone", "tokenVersion" FROM "users" WHERE "id" = 'u2'`

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { isValidMonthKey } from "../../utils/date";
 import { amountSchema } from "../../utils/validation";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
@@ -7,6 +8,7 @@ import {
   createLoan,
   deleteLoan,
   getLoans,
+  getLoansForMonth,
   getLoansSummary,
   settleLoan,
   updateLoan,
@@ -24,6 +26,8 @@ const createLoanSchema = z.object({
   notes: z.string().trim().max(500).optional().nullable(),
   /** False records a debt that predates the app without fabricating a cash movement today. */
   recordCashflow: z.boolean().optional(),
+  /** When the money moved (D-62). Defaults to now. */
+  date: z.coerce.date().optional(),
 });
 
 const settleLoanSchema = z.object({
@@ -37,15 +41,22 @@ const updateLoanSchema = z.object({
   amount: amountSchema().optional(),
   dueDate: z.string().datetime().optional().nullable(),
   notes: z.string().trim().max(500).optional().nullable(),
+  date: z.coerce.date().optional(),
+});
+
+/** Validated, so a bad filter is a 400 rather than a Prisma error (it used to be a 500). */
+const listLoansSchema = z.object({
+  type: z.enum(["LENT", "BORROWED"]).optional(),
+  status: z.enum(["PENDING", "PARTIAL", "SETTLED"]).optional(),
+  /** The Loans tab's month view (R-41): visible loans, with their position as of its end. */
+  month: z.string().refine(isValidMonthKey, "month must be in YYYY-MM format").optional(),
 });
 
 loansRouter.get(
   "/",
   asyncHandler(async (req, res) => {
-    const type = req.query.type as "LENT" | "BORROWED" | undefined;
-    const status = req.query.status as "PENDING" | "PARTIAL" | "SETTLED" | undefined;
-    const loans = await getLoans(req.userId!, { type, status });
-    res.json(loans);
+    const { month, ...filters } = listLoansSchema.parse(req.query);
+    res.json(month ? await getLoansForMonth(req.userId!, month, filters) : await getLoans(req.userId!, filters));
   })
 );
 

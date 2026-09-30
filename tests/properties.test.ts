@@ -69,9 +69,16 @@ async function randomHistory(opts: {
 }) {
   const r = rng(opts.seed);
   const user = await makeUser();
+  // Every history starts from some opening cash (D-62), which must shift every cash figure alike.
+  await prisma.user.update({ where: { id: user.id }, data: { openingBalance: D(r.amount()).mul(10) } });
   const categories = await Promise.all(["Food", "Commute", "Bills"].map((n) => categoryFor(user.id, n)));
   const plain: string[] = []; // SPEND/EARN ids the user can edit or delete
-  const loans: string[] = [];
+  const loans: { id: string; date: Date }[] = [];
+  /** A day in the window up to today: loans and repayments can't be in the future (D-63). */
+  const pastDate = () => {
+    const d = dateIn(r, FIRST, now.key);
+    return d.getTime() > Date.now() ? new Date(Date.now() - 60 * 60 * 1000) : d;
+  };
 
   const ops: [number, () => Promise<unknown>][] = [
     [20, async () => {
@@ -100,21 +107,33 @@ async function randomHistory(opts: {
         personName: `P${r.int(1, 5)}`,
         amount: r.amount(),
         recordCashflow: opts.cashflowOnly ? true : r.next() < 0.7,
+        date: pastDate(),
       });
-      loans.push(loan.id);
+      loans.push({ id: loan.id, date: new Date(loan.date) });
     }],
     [15, async () => {
       if (!loans.length) return;
       // Sometimes more than what's left, which must clamp; sometimes a loan that's already settled.
-      await settleLoan(user.id, r.pick(loans), r.amount() / 2, dateIn(r, now.key, LAST));
+      // Dated between the loan's date and now, as the rules require.
+      const loan = r.pick(loans);
+      const when = new Date(loan.date.getTime() + r.next() * (Date.now() - loan.date.getTime()));
+      await settleLoan(user.id, loan.id, r.amount() / 2, when);
     }],
     [5, async () => {
       if (!loans.length) return;
-      await updateLoan(user.id, r.pick(loans), { amount: r.amount() });
+      await updateLoan(user.id, r.pick(loans).id, { amount: r.amount() });
     }],
     [4, async () => {
       if (!loans.length) return;
-      await deleteLoan(user.id, loans.splice(r.int(0, loans.length - 1), 1)[0]);
+      await deleteLoan(user.id, loans.splice(r.int(0, loans.length - 1), 1)[0].id);
+    }],
+    [4, async () => {
+      if (!loans.length) return;
+      // Redate a loan; refused (400) when that would put it after its first repayment.
+      const loan = r.pick(loans);
+      const date = pastDate();
+      await updateLoan(user.id, loan.id, { date });
+      loan.date = date;
     }],
   ];
   const totalWeight = ops.reduce((t, [w]) => t + w, 0);
@@ -133,19 +152,20 @@ async function randomHistory(opts: {
 
 /** Cash and outstanding debt as of the end of `month`, computed from the rows, not the dashboard. */
 async function positionFromRows(userId: string, month: string) {
-  const [rows, loans, settlements] = await Promise.all([
+  const [rows, loans, settlements, user] = await Promise.all([
     prisma.transaction.findMany({ where: { userId, month: { lte: month } }, select: { kind: true, amount: true } }),
     prisma.loan.findMany({ where: { userId } }),
     prisma.transaction.findMany({
       where: { userId, month: { lte: month }, kind: { in: ["COLLECT", "REPAY"] } },
       select: { loanId: true, amount: true },
     }),
+    prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { openingBalance: true } }),
   ]);
-  const cash = rows.reduce((t, row) => t.add(row.amount.mul(CASH_SIGN[row.kind])), ZERO);
+  const cash = rows.reduce((t, row) => t.add(row.amount.mul(CASH_SIGN[row.kind])), user.openingBalance ?? ZERO);
   let lent = ZERO;
   let borrowed = ZERO;
   for (const loan of loans) {
-    if (monthKeyInZone(loan.createdAt, "Asia/Karachi") > month) continue;
+    if (monthKeyInZone(loan.date, "Asia/Karachi") > month) continue; // counts from its own date (D-62)
     const settled = settlements.filter((s) => s.loanId === loan.id).reduce((t, s) => t.add(s.amount), ZERO);
     const outstanding = Prisma.Decimal.max(ZERO, loan.amount.sub(settled));
     if (loan.type === "LENT") lent = lent.add(outstanding);

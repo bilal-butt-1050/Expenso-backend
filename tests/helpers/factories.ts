@@ -90,6 +90,8 @@ export async function makeLoan(opts: {
       settledAmount: new Prisma.Decimal(0),
       status: "PENDING",
       dueDate: opts.dueDate ?? null,
+      // The loan's own date is when it opened (D-62); the fixture's `createdAt` is that moment.
+      date: createdAt,
       createdAt,
       updatedAt: createdAt,
     },
