@@ -11,16 +11,19 @@ import { CASH_SIGN } from "../transactions/transactions.service";
  *
  * The user rarely knows what they had when they started, but they do know what they have now. So
  * they enter today's money and this stores the one opening amount that makes today's figure match
- * it: `openingBalance = cashToday − (the ledger's cash up to today)`. Re-entering recomputes it.
+ * it: `openingBalance = cashToday − (the ledger's cash up to today)`.
  *
- * Serializable, so two of these at once can't both apply. It doesn't guard against an ordinary
- * entry saved in the same instant (those writes aren't Serializable); for a single-user app that's
- * accepted, and re-entering today's money corrects it.
+ * It's set **once**, when the user starts (D-64): from then on it's the fixed starting point every
+ * figure builds on, so a second attempt is refused (409). Serializable, so two first attempts at
+ * once can't both apply.
  */
 export async function setOpeningBalanceFromToday(userId: string, cashToday: number) {
   const openingBalance = await inSerializableTransaction(async (tx) => {
-    const user = await tx.user.findUnique({ where: { id: userId }, select: { timezone: true } });
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { timezone: true, openingBalance: true } });
     if (!user) throw new AppError(404, "User not found");
+    if (user.openingBalance !== null) {
+      throw new AppError(409, "Your opening cash is already set");
+    }
 
     // Exactly the dashboard's rule for the current month's Cash available: every earlier month, plus
     // this month's rows dated before the start of tomorrow. Using the same rule means the figure
