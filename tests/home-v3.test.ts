@@ -98,7 +98,7 @@ describe("OPN: opening cash", () => {
     expect((await getDashboardSummary(user.id, "2026-05")).openingCash).toBe(7_500); // FIN-012 restated
   });
 
-  it("OPN-003: entering today's money makes today's Cash available exactly that; re-entering recomputes", async () => {
+  it("OPN-003: entering today's money makes today's Cash available exactly that; it's set once (D-64)", async () => {
     pinClock(SEP_15_0900_PKT);
     const user = await makeUser();
     await earn(user.id, 20_000, pkt("2026-09-01T12:00:00"));
@@ -109,11 +109,13 @@ describe("OPN: opening cash", () => {
     expect(put.json.openingBalance).toBe(45_000 - 18_500);
     expect((await getDashboardSummary(user.id, "2026-09")).cashAvailable.amount).toBe(45_000);
 
-    await call(tokenFor(user.id), "PUT", "/opening-balance", { cashToday: 30_000 });
-    expect((await getDashboardSummary(user.id, "2026-09")).cashAvailable.amount).toBe(30_000);
+    // Once set, it's the fixed starting point: a second attempt is refused and changes nothing.
+    const again = await call(tokenFor(user.id), "PUT", "/opening-balance", { cashToday: 30_000 });
+    expect(again.status).toBe(409);
+    expect((await getDashboardSummary(user.id, "2026-09")).cashAvailable.amount).toBe(45_000);
   });
 
-  it("OPN-003: two at once end on one of the targets", async () => {
+  it("OPN-003: two first attempts at once: exactly one applies", async () => {
     const user = await makeUser();
     await earn(user.id, 1_000, dateOf("2026-09-01"));
 
@@ -122,24 +124,26 @@ describe("OPN: opening cash", () => {
       setOpeningBalanceFromToday(user.id, 9_000),
     ]);
     for (const r of results) if (r.status === "rejected") expect((r.reason as { statusCode?: number }).statusCode).toBe(409);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const month = (await getDashboardSummary(user.id, "2026-09")).cashAvailable;
     expect([5_000, 9_000]).toContain(month.openingBalance! + 1_000);
   });
 
-  it("OPN-004: bad amounts are refused and write nothing; zero and negative are fine", async () => {
+  it("OPN-004: bad or negative amounts are refused and write nothing; zero is fine", async () => {
     const user = await makeUser();
     const token = tokenFor(user.id);
-    for (const bad of ["NaN", "1e999", '"abc"', "null", String(MAX_AMOUNT + 1)]) {
+    // Money can't be negative (D-64).
+    for (const bad of ["NaN", "1e999", '"abc"', "null", "-1", "-2500", String(MAX_AMOUNT + 1)]) {
       expect((await call(token, "PUT", "/opening-balance", `{"cashToday":${bad}}`)).status, bad).toBe(400);
     }
     expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).openingBalance).toBeNull();
-
     expect((await call(token, "PUT", "/opening-balance", { cashToday: 0 })).status).toBe(200);
-    expect((await call(token, "PUT", "/opening-balance", { cashToday: -2_500 })).json.openingBalance).toBe(-2_500);
 
     // Within bounds, but the resulting opening amount isn't: the ledger is -1,000.
-    await spend(user.id, 1_000, dateOf("2026-09-01"));
-    expect((await call(token, "PUT", "/opening-balance", { cashToday: MAX_AMOUNT })).status).toBe(400);
+    const other = await makeUser();
+    await spend(other.id, 1_000, dateOf("2026-09-01"));
+    expect((await call(tokenFor(other.id), "PUT", "/opening-balance", { cashToday: MAX_AMOUNT })).status).toBe(400);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: other.id } })).openingBalance).toBeNull();
   });
 
   it("OPN-005: null until set, as null; after setting, every cached month reflects it", async () => {

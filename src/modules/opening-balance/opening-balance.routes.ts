@@ -8,9 +8,9 @@ import { setOpeningBalanceFromToday } from "./opening-balance.service";
 export const openingBalanceRouter = Router();
 openingBalanceRouter.use(requireAuth);
 
-/** What the user holds today, all cash and bank money together. Zero and negative are real answers. */
+/** What the user holds today, all cash and bank money together. Money can't be negative (D-64). */
 const schema = z.object({
-  cashToday: z.number().finite().min(-MAX_AMOUNT, "Amount is too large").max(MAX_AMOUNT, "Amount is too large"),
+  cashToday: z.number().finite().min(0, "Enter zero or more").max(MAX_AMOUNT, "Amount is too large"),
 });
 
 openingBalanceRouter.put(
