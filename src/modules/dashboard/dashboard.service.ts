@@ -331,9 +331,11 @@ async function buildDashboardSummary(userId: string, month: string) {
     if (period === "current") {
       toDay = datePartsInZone(now, timezone).day;
       currentSpend = currentSpend.filter((r) => r.date < endOfToday);
+      // The previous month's rows up to the end of its day N. On the 31st against a 30-day month the
+      // cutoff falls after that month ends, which simply keeps all of it: the rows are already only
+      // that month's.
       const [prevYear, prevMonthNum] = prevMonth.split("-").map(Number);
-      const prevMonthDays = new Date(Date.UTC(prevYear, prevMonthNum, 0)).getUTCDate();
-      const previousCutoff = startOfDayInZone(prevYear, prevMonthNum, Math.min(toDay, prevMonthDays) + 1, timezone);
+      const previousCutoff = startOfDayInZone(prevYear, prevMonthNum, toDay + 1, timezone);
       previousSpend = previousSpend.filter((r) => r.date < previousCutoff);
     }
     comparison = {

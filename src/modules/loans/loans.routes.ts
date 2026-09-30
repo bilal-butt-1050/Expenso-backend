@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { isValidMonthKey } from "../../utils/date";
+import { movementDateSchema } from "../../utils/validation";
 import { amountSchema } from "../../utils/validation";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
@@ -27,13 +28,13 @@ const createLoanSchema = z.object({
   /** False records a debt that predates the app without fabricating a cash movement today. */
   recordCashflow: z.boolean().optional(),
   /** When the money moved (D-62). Defaults to now. */
-  date: z.coerce.date().optional(),
+  date: movementDateSchema.optional(),
 });
 
 const settleLoanSchema = z.object({
   paymentAmount: amountSchema("Payment amount must be greater than 0").optional(),
   /** When the payment actually happened. Defaults to now. */
-  date: z.coerce.date().optional(),
+  date: movementDateSchema.optional(),
 });
 
 const updateLoanSchema = z.object({
@@ -41,16 +42,20 @@ const updateLoanSchema = z.object({
   amount: amountSchema().optional(),
   dueDate: z.string().datetime().optional().nullable(),
   notes: z.string().trim().max(500).optional().nullable(),
-  date: z.coerce.date().optional(),
+  date: movementDateSchema.optional(),
 });
 
 /** Validated, so a bad filter is a 400 rather than a Prisma error (it used to be a 500). */
-const listLoansSchema = z.object({
-  type: z.enum(["LENT", "BORROWED"]).optional(),
-  status: z.enum(["PENDING", "PARTIAL", "SETTLED"]).optional(),
-  /** The Loans tab's month view (R-41): visible loans, with their position as of its end. */
-  month: z.string().refine(isValidMonthKey, "month must be in YYYY-MM format").optional(),
-});
+const listLoansSchema = z
+  .object({
+    type: z.enum(["LENT", "BORROWED"]).optional(),
+    status: z.enum(["PENDING", "PARTIAL", "SETTLED"]).optional(),
+    /** The Loans tab's month view (R-41): visible loans, with their position as of its end. */
+    month: z.string().refine(isValidMonthKey, "month must be in YYYY-MM format").optional(),
+  })
+  // `status` is today's, while `month` is a view as of that month's end: filtering one by the other
+  // would give a list that can't match the month's totals.
+  .refine((q) => !(q.month && q.status), { message: "status can't be combined with month", path: ["status"] });
 
 loansRouter.get(
   "/",

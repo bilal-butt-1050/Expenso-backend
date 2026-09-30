@@ -340,6 +340,8 @@ describe("LTL: dated loans and the month timeline", () => {
     const backdated = await createLoan(user.id, { type: "LENT", personName: "A", amount: 100, date: pkt("2026-08-31T23:30:00") });
     const opening = await prisma.transaction.findFirstOrThrow({ where: { loanId: backdated.id } });
     expect([opening.date.toISOString(), opening.month]).toEqual([pkt("2026-08-31T23:30:00").toISOString(), "2026-08"]); // LTL-012
+    expect(ids(await monthView(user.id, "2026-08"))).toEqual([backdated.id]);
+    expect((await getDashboardSummary(user.id, "2026-08")).netDebtSnapshot.totalLent).toBe(100);
 
     const undated = await createLoan(user.id, { type: "LENT", personName: "B", amount: 100 });
     expect(undated.date).toBe(SEP_15_0900_PKT.toISOString());
@@ -369,6 +371,20 @@ describe("LTL: dated loans and the month timeline", () => {
     const future = await updateLoan(user.id, loan.id, { date: pkt("2026-09-16T12:00:00") }).catch((e) => e);
     expect(future.statusCode).toBe(400);
     expect((await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } })).date.toISOString()).toBe(pkt("2026-09-01T12:00:00").toISOString());
+    const opening = await prisma.transaction.findFirstOrThrow({ where: { loanId: loan.id, kind: "LEND_OUT" } });
+    expect([opening.date.toISOString(), opening.month]).toEqual([pkt("2026-09-01T12:00:00").toISOString(), "2026-09"]);
+  });
+
+  it("LTL-013: changing the amount and the date together moves the opening movement in both", async () => {
+    pinClock(SEP_15_0900_PKT);
+    const user = await makeUser();
+    const loan = await createLoan(user.id, { type: "BORROWED", personName: "Bank", amount: 2_000, date: pkt("2026-09-10T12:00:00") });
+
+    await updateLoan(user.id, loan.id, { amount: 3_500, date: pkt("2026-08-25T12:00:00") });
+
+    const opening = await prisma.transaction.findFirstOrThrow({ where: { loanId: loan.id } });
+    expect([opening.amount.toNumber(), opening.month]).toEqual([3_500, "2026-08"]);
+    expect((await getDashboardSummary(user.id, "2026-08")).netDebtSnapshot.totalBorrowed).toBe(3_500);
   });
 
   it("LTL-008: without a month the list is as before; a bad month is a 400; no other user's loans", async () => {
@@ -383,6 +399,7 @@ describe("LTL: dated loans and the month timeline", () => {
     expect(all.json[0]).not.toHaveProperty("asOf");
     expect((await call(tokenFor(a.id), "GET", "/loans?month=nope")).status).toBe(400);
     expect((await call(tokenFor(a.id), "GET", "/loans?type=bogus")).status).toBe(400);
+    expect((await call(tokenFor(a.id), "GET", "/loans?month=2026-09&status=SETTLED")).status).toBe(400);
     const month = await call(tokenFor(a.id), "GET", "/loans?month=2026-09");
     expect(JSON.stringify(month.json)).not.toContain("B-secret");
   });
@@ -395,6 +412,10 @@ describe("LTL: dated loans and the month timeline", () => {
     for (const when of [pkt("2026-09-09T23:00:00"), pkt("2026-09-16T12:00:00")]) {
       expect((await settleLoan(user.id, loan.id, 100, when).catch((e) => e)).statusCode).toBe(400);
     }
+    const untouched = await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } });
+    expect([untouched.settledAmount.toNumber(), untouched.status]).toEqual([0, "PENDING"]);
+    expect(await prisma.transaction.count({ where: { loanId: loan.id, kind: "REPAY" } })).toBe(0);
+
     await settleLoan(user.id, loan.id, 100, pkt("2026-09-10T08:00:00")); // same day, earlier hour: fine
     expect(await prisma.transaction.count({ where: { loanId: loan.id, kind: "REPAY" } })).toBe(1);
   });
@@ -429,5 +450,51 @@ describe("LTL: dated loans and the month timeline", () => {
       const { netDebtSnapshot } = await getDashboardSummary(user.id, month);
       expect([total("LENT"), total("BORROWED")], month).toEqual([netDebtSnapshot.totalLent, netDebtSnapshot.totalBorrowed]);
     }
+  });
+});
+
+
+describe("Dates at the boundary (G4 PR #27)", () => {
+  it("a loan or repayment date must be an ISO date-time with an offset, from 2000 on", async () => {
+    pinClock(SEP_15_0900_PKT);
+    const user = await makeUser();
+    const token = tokenFor(user.id);
+    const loan = await createLoan(user.id, { type: "LENT", personName: "Ali", amount: 1_000, date: pkt("2026-09-01T12:00:00") });
+
+    // null, 0 and true used to become 1 Jan 1970; an offset-less string is read in the server's zone.
+    const bad = ["null", "0", "true", '"2026-09-01T12:00:00"', '"1990-05-01T12:00:00.000Z"', '"soon"'];
+    for (const date of bad) {
+      const post = await call(token, "POST", "/loans", `{"type":"LENT","personName":"X","amount":10,"date":${date}}`);
+      const patch = await call(token, "PATCH", `/loans/${loan.id}`, `{"date":${date}}`);
+      const settle = await call(token, "PATCH", `/loans/${loan.id}/settle`, `{"paymentAmount":10,"date":${date}}`);
+      expect([post.status, patch.status, settle.status], date).toEqual([400, 400, 400]);
+    }
+    expect(await prisma.loan.count({ where: { userId: user.id } })).toBe(1);
+    const unchanged = await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } });
+    expect([unchanged.date.toISOString(), unchanged.settledAmount.toNumber()]).toEqual([pkt("2026-09-01T12:00:00").toISOString(), 0]);
+
+    // What the app sends: toISOString(), with its Z.
+    const ok = await call(token, "POST", "/loans", { type: "LENT", personName: "Y", amount: 10, date: pkt("2026-09-02T12:00:00").toISOString() });
+    expect(ok.status).toBe(201);
+  });
+
+  it("opening cash is stored to the paisa, and the response is what was stored", async () => {
+    const user = await makeUser();
+    const res = await call(tokenFor(user.id), "PUT", "/opening-balance", `{"cashToday":${0.1 + 0.2}}`);
+    expect(res.json.openingBalance).toBe(0.3);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).openingBalance?.toString()).toBe("0.3");
+  });
+
+  it("changing the timezone drops the cached dashboard", async () => {
+    pinClock(SEP_15_0900_PKT); // 15 Sep in both Karachi and UTC
+    const user = await makeUser();
+    await earn(user.id, 1_000, pkt("2026-09-01T12:00:00"));
+    expect((await getDashboardSummary(user.id, "2026-09")).closingCash).toBe(1_000);
+
+    // Straight to the table, so only the timezone change can clear the cache.
+    await makeTransaction({ userId: user.id, kind: "EARN", amount: 50, date: pkt("2026-09-02T12:00:00") });
+    expect((await call(tokenFor(user.id), "PATCH", "/auth/profile", { timezone: "UTC" })).status).toBe(200);
+
+    expect((await getDashboardSummary(user.id, "2026-09")).closingCash).toBe(1_050);
   });
 });

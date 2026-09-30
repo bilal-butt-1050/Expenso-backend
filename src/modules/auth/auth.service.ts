@@ -4,6 +4,7 @@ import { hashPassword, comparePassword } from "../../utils/password";
 import { signToken } from "../../utils/jwt";
 import { AppError } from "../../utils/asyncHandler";
 import { toNumber } from "../../utils/money";
+import { invalidateUserDashboard } from "../../lib/cache";
 import { consumeOtp } from "./otp.service";
 import { OAuth2Client } from "google-auth-library";
 import { env } from "../../config/env";
@@ -264,6 +265,8 @@ export async function updateUserProfile(
     where: { id: userId },
     data,
   });
+  // A new timezone moves "today" and the current month, so no cached dashboard survives it.
+  if (data.timezone !== undefined) invalidateUserDashboard(userId);
   return toPublicUser(user);
 }
 

@@ -284,6 +284,16 @@ export async function settleLoan(
       throw new AppError(400, "Loan is already fully settled");
     }
 
+    const date = settledOn ?? new Date();
+    const timezone = await userTimezone(tx, userId);
+    // A repayment happens on or after the loan's day, and never in the future (D-63). Compared as
+    // calendar days, so a repayment the same day as the loan is fine whatever the hour. Checked
+    // before anything is written.
+    assertNotFuture(date, timezone, "A repayment's date");
+    if (dayKeyInZone(date, timezone) < dayKeyInZone(loan.date, timezone)) {
+      throw new AppError(400, "A repayment can't be dated before the loan");
+    }
+
     const requested = paymentAmount !== undefined ? money(paymentAmount) : remaining;
     const payment = min(requested, remaining);
 
@@ -298,14 +308,6 @@ export async function settleLoan(
       },
     });
 
-    const date = settledOn ?? new Date();
-    const timezone = await userTimezone(tx, userId);
-    // A repayment happens on or after the loan's day, and never in the future (D-63). Compared as
-    // calendar days, so a repayment the same day as the loan is fine whatever the hour.
-    assertNotFuture(date, timezone, "A repayment's date");
-    if (dayKeyInZone(date, timezone) < dayKeyInZone(loan.date, timezone)) {
-      throw new AppError(400, "A repayment can't be dated before the loan");
-    }
     const kind: TransactionKind = loan.type === "LENT" ? "COLLECT" : "REPAY";
 
     await tx.transaction.create({
