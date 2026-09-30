@@ -151,17 +151,34 @@ async function randomHistory(opts: {
 }
 
 /** Cash and outstanding debt as of the end of `month`, computed from the rows, not the dashboard. */
+/**
+ * The month the opening amount starts counting (D-65b): the earlier of the account's month and the
+ * first entry's month. It's in every position from that month's start on, and in none before.
+ */
+async function openingFrom(userId: string) {
+  const [user, first] = await Promise.all([
+    prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { openingBalance: true, createdAt: true } }),
+    prisma.transaction.findFirst({ where: { userId }, orderBy: { month: "asc" }, select: { month: true } }),
+  ]);
+  const accountMonth = monthKeyInZone(user.createdAt, "Asia/Karachi");
+  const startMonth = first && first.month < accountMonth ? first.month : accountMonth;
+  return { startMonth, amount: user.openingBalance ?? ZERO };
+}
+
 async function positionFromRows(userId: string, month: string) {
-  const [rows, loans, settlements, user] = await Promise.all([
+  const opening = await openingFrom(userId);
+  const [rows, loans, settlements] = await Promise.all([
     prisma.transaction.findMany({ where: { userId, month: { lte: month } }, select: { kind: true, amount: true } }),
     prisma.loan.findMany({ where: { userId } }),
     prisma.transaction.findMany({
       where: { userId, month: { lte: month }, kind: { in: ["COLLECT", "REPAY"] } },
       select: { loanId: true, amount: true },
     }),
-    prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { openingBalance: true } }),
   ]);
-  const cash = rows.reduce((t, row) => t.add(row.amount.mul(CASH_SIGN[row.kind])), user.openingBalance ?? ZERO);
+  const cash = rows.reduce(
+    (t, row) => t.add(row.amount.mul(CASH_SIGN[row.kind])),
+    month >= opening.startMonth ? opening.amount : ZERO
+  );
   let lent = ZERO;
   let borrowed = ZERO;
   for (const loan of loans) {
@@ -223,8 +240,13 @@ describe("property tests", () => {
           // FIN-003, against the rows: net worth = cash + lent − borrowed, all at the end of the month.
           expect(d.closingCash, `FIN-003 cash ${at}`).toBe(rows.cash.toNumber());
           expect(d.netWorth, `FIN-003 ${at}`).toBe(rows.cash.add(rows.lent).sub(rows.borrowed).toNumber());
-          // FIN-005: no gap between one month's close and the next month's open.
-          if (previousClosing !== null) expect(d.openingCash, `FIN-005 ${at}`).toBe(previousClosing);
+          // FIN-005: no gap between one month's close and the next month's open, except where the
+          // opening amount starts counting: that month opens with it added.
+          const opening = await openingFrom(userId);
+          const added = month === opening.startMonth ? opening.amount.toNumber() : 0;
+          if (previousClosing !== null) {
+            expect(d.openingCash, `FIN-005 ${at}`).toBe(D(previousClosing).add(added).toNumber());
+          }
           previousClosing = d.closingCash;
           // FIN-006: opening cash plus this month's movements is the closing cash.
           expect(D(d.openingCash).add(d.netCashThisMonth).toNumber(), `FIN-006 ${at}`).toBe(d.closingCash);

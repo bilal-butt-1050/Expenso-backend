@@ -58,11 +58,23 @@ async function buildDashboardSummary(userId: string, month: string) {
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { timezone: true, openingBalance: true },
+    select: { timezone: true, openingBalance: true, createdAt: true },
   });
   const timezone = user?.timezone ?? DEFAULT_TIMEZONE;
   // Cash before the first entry (D-62). Null = never set, counted as 0.
-  const openingBalance = user?.openingBalance ?? money(0);
+  const openingBalanceSet = user?.openingBalance ?? money(0);
+  // It counts from the month the user started: the earlier of the account's month and the first
+  // entry's month. Before that there was nothing to count, so earlier months show 0 instead of
+  // money the user only had later.
+  const firstEntry = await prisma.transaction.findFirst({
+    where: { userId },
+    orderBy: { month: "asc" },
+    select: { month: true },
+  });
+  const accountMonth = user?.createdAt ? monthKeyInZone(user.createdAt, timezone) : month;
+  const startMonth = firstEntry && firstEntry.month < accountMonth ? firstEntry.month : accountMonth;
+  // One condition for the month's start and end, so a month's own figures stay continuous.
+  const openingBalance = month >= startMonth ? openingBalanceSet : money(0);
 
   const [monthRows, prevMonthRows, toDateRows, toPrevMonthRows, budgets, prevMonthBudgets, categories, allLoans, settlementRows] =
     await Promise.all([
