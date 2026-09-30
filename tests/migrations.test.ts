@@ -15,6 +15,7 @@ import { scratchDatabase, migrationSql, ALL_MIGRATIONS } from "./helpers/migrati
 
 const PRE_LEDGER = "20260912190000_loans_and_otp_baseline";
 const LEDGER = "20260924094500_unified_transaction_ledger";
+const BEFORE_LOAN_DATES = "20260927120000_recompute_month_in_user_timezone";
 const TZ = "Asia/Karachi";
 
 type Kind = keyof typeof CASH_SIGN;
@@ -109,7 +110,19 @@ beforeAll(async () => {
   await q(`INSERT INTO "budgets" ("id", "userId", "categoryId", "amount", "month", "updatedAt") VALUES ('b1', 'u1', 'c1', 3333.33, '2026-09', now())`);
 
   checksumBefore = await checksum();
-  db.deployThrough(); // the ledger migration and everything after it
+  db.deployThrough(BEFORE_LOAN_DATES);
+
+  // MIG-014's two cases, as the ledger then stood (user u3, so the u1 assertions are untouched): a
+  // loan with no opening movement (recorded without cashflow), and one whose movement was dated
+  // earlier than the record was created (a backdated entry).
+  await q(`INSERT INTO "users" ("id", "email", "passwordHash") VALUES ('u3', 'dates@test.local', 'x')`);
+  await q(`INSERT INTO "loans" ("id", "userId", "type", "personName", "amount", "createdAt", "updatedAt")
+           VALUES ('l-nomove', 'u3', 'BORROWED', 'Old debt', 700, '2026-07-10 12:00'::timestamp, now()),
+                  ('l-backdated', 'u3', 'LENT', 'Early', 300, '2026-09-20 12:00'::timestamp, now())`);
+  await q(`INSERT INTO "transactions" ("id", "userId", "kind", "amount", "date", "month", "loanId", "updatedAt")
+           VALUES ('t-backdated', 'u3', 'LEND_OUT', 300, '2026-09-02 07:00'::timestamp, '2026-09', 'l-backdated', now())`);
+
+  db.deployThrough(); // everything after
   checksumAfter = await checksum();
   rows = await db.client.$queryRawUnsafe<Row[]>(`SELECT * FROM "transactions" ORDER BY "id"`);
 }, 120_000);
@@ -182,7 +195,7 @@ describe("MIG — the unified ledger migration, on data in the old shape", () =>
       .add(INCOMES.reduce((t, i) => t.add(round2(i.amount)), new Prisma.Decimal(0)))
       .sub(LOANS.filter((l) => l.type === "LENT").reduce((t, l) => t + l.amount, 0))
       .add(LOANS.filter((l) => l.type === "BORROWED").reduce((t, l) => t + l.amount, 0));
-    const cash = rows.reduce((t, r) => t.add(r.amount.mul(CASH_SIGN[r.kind])), new Prisma.Decimal(0));
+    const cash = rows.filter((r) => r.userId === "u1").reduce((t, r) => t.add(r.amount.mul(CASH_SIGN[r.kind])), new Prisma.Decimal(0));
     expect(cash.toString()).toBe(expected.toString());
   });
 
@@ -227,6 +240,29 @@ describe("MIG — the unified ledger migration, on data in the old shape", () =>
       const row = loans.find((x) => x.id === l.id)!;
       expect([row.amount.toString(), row.settledAmount.toString()], l.id).toEqual([round2(l.amount), round2(l.settled)]);
     }
+  });
+
+  it("MIG-014: loans.date is backfilled from the opening movement, and an insert without it still works", async () => {
+    const loans = await db.client.$queryRawUnsafe<{ id: string; date: Date; opening: Date | null; createdAt: Date }[]>(`
+      SELECT l."id", l."date", l."createdAt",
+             (SELECT t."date" FROM "transactions" t
+              WHERE t."loanId" = l."id" AND t."kind" IN ('LEND_OUT', 'BORROW_IN')
+              ORDER BY t."date" LIMIT 1) AS opening
+      FROM "loans" l`);
+    expect(loans.length).toBe(LOANS.length + 2);
+    for (const l of loans) {
+      expect(l.date.toISOString(), l.id).toBe((l.opening ?? l.createdAt).toISOString());
+    }
+    const byId = new Map(loans.map((l) => [l.id, l.date.toISOString()]));
+    expect(byId.get("l-nomove")).toBe(utc("2026-07-10 12:00").toISOString()); // fell back to createdAt
+    expect(byId.get("l-backdated")).toBe(utc("2026-09-02 07:00").toISOString()); // took the movement's date
+    // What the previous backend image does after this deploys: it doesn't know the column.
+    await db.client.$executeRawUnsafe(
+      `INSERT INTO "loans" ("id", "userId", "type", "personName", "amount", "updatedAt") VALUES ('l-old-client', 'u1', 'LENT', 'Old', 10, now())`
+    );
+    const [inserted] = await db.client.$queryRawUnsafe<{ date: Date | null }[]>(`SELECT "date" FROM "loans" WHERE "id" = 'l-old-client'`);
+    expect(inserted.date).not.toBeNull();
+    await db.client.$executeRawUnsafe(`DELETE FROM "loans" WHERE "id" = 'l-old-client'`);
   });
 
   it("MIG-013: a user with no transactions migrates cleanly", async () => {

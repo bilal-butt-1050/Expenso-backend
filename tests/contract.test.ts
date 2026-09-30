@@ -30,6 +30,7 @@ const User = z.object({
   avatarUrl: z.string().nullable(),
   createdAt: isoDate.nullable(),
   hasPassword: z.boolean(),
+  openingBalance: money.nullable(),
 });
 const AuthResponse = z.object({ token: z.string().min(1), user: User });
 
@@ -79,8 +80,12 @@ const Loan = z.object({
   dueDate: isoDate.nullable(),
   status: z.enum(["PENDING", "PARTIAL", "SETTLED"]),
   notes: z.string().nullable(),
+  date: isoDate,
   createdAt: isoDate,
   updatedAt: isoDate,
+});
+const LoanInMonth = Loan.extend({
+  asOf: z.object({ settledAmount: money, remainingAmount: money, status: z.enum(["PENDING", "PARTIAL", "SETTLED"]) }),
 });
 const LoansSummary = z.object({
   totalLentPending: money,
@@ -109,6 +114,29 @@ const DashboardSummary = z.object({
   plannedSavings: money,
   rolloverSavings: money,
   totalBudgeted: money,
+  cashAvailable: z.object({
+    amount: money,
+    period: z.enum(["past", "current", "future"]),
+    openingBalance: money.nullable(),
+    breakdown: z.object({
+      startOfMonth: money,
+      income: money,
+      expenses: money,
+      lent: money,
+      borrowed: money,
+      collected: money,
+      repaid: money,
+    }),
+  }),
+  comparison: z
+    .object({
+      currentTotal: money,
+      currentByCategory: z.array(z.object({ categoryId: z.string().uuid(), amount: money })),
+      previousTotal: money,
+      previousByCategory: z.array(z.object({ categoryId: z.string().uuid(), amount: money })),
+      toDay: z.number().int().nullable(),
+    })
+    .nullable(),
   dailyAllowance: money,
   daysRemaining: z.number().int(),
   daysInMonth: z.number().int(),
@@ -339,6 +367,10 @@ describe("CON-001: every endpoint the app calls returns the shape the app reads"
     const edited = await call("PATCH", `/loans/${loan.json.id}`, { token, body: { personName: "Ali Khan" } });
     expectShape(Loan, edited.json, "PATCH /loans/:id");
     expectShape(z.array(Loan).min(1), (await call("GET", "/loans", { token })).json, "GET /loans");
+    expectShape(z.array(LoanInMonth).min(1), (await call("GET", `/loans?month=${month.key}`, { token })).json, "GET /loans?month");
+    const opening = await call("PUT", "/opening-balance", { token, body: { cashToday: 25_000 } });
+    expect(opening.status).toBe(200);
+    expectShape(z.object({ openingBalance: money }), opening.json, "PUT /opening-balance");
     expectShape(LoansSummary, (await call("GET", "/loans/summary", { token })).json, "GET /loans/summary");
 
     // The loan's movements are in the list too, so the row shape is checked for those kinds as well.

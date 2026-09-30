@@ -277,7 +277,8 @@ describe("LEDGER — money invariants", () => {
     await prisma.budget.create({ data: { userId: user.id, categoryId: food.id, amount: new Prisma.Decimal(5_000), month } });
     await createTransaction(user.id, { kind: "SPEND", amount: 1_200, date: dateOf("2026-05-03"), categoryId: food.id });
 
-    const loan = await createLoan(user.id, { type: "BORROWED", personName: "Big Debt", amount: 40_000 });
+    // Borrowed at the start of May, repaid on the 20th: a repayment can't precede its loan (D-63).
+    const loan = await createLoan(user.id, { type: "BORROWED", personName: "Big Debt", amount: 40_000, date: dateOf("2026-05-01") });
     await settleLoan(user.id, loan.id, undefined, dateOf("2026-05-20"));
 
     const d = await getDashboardSummary(user.id, month);

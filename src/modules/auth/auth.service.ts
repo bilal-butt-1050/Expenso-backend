@@ -1,7 +1,10 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { hashPassword, comparePassword } from "../../utils/password";
 import { signToken } from "../../utils/jwt";
 import { AppError } from "../../utils/asyncHandler";
+import { toNumber } from "../../utils/money";
+import { invalidateUserDashboard } from "../../lib/cache";
 import { consumeOtp } from "./otp.service";
 import { OAuth2Client } from "google-auth-library";
 import { env } from "../../config/env";
@@ -262,6 +265,8 @@ export async function updateUserProfile(
     where: { id: userId },
     data,
   });
+  // A new timezone moves "today" and the current month, so no cached dashboard survives it.
+  if (data.timezone !== undefined) invalidateUserDashboard(userId);
   return toPublicUser(user);
 }
 
@@ -358,6 +363,7 @@ function toPublicUser(user: {
   createdAt?: Date;
   // Required, so every caller passes the full row: a missing field would read as "no password".
   passwordHash: string | null;
+  openingBalance: Prisma.Decimal | null;
 }) {
   return {
     id: user.id,
@@ -371,5 +377,7 @@ function toPublicUser(user: {
     createdAt: user.createdAt?.toISOString() ?? null,
     // Whether Settings offers "Change password" (needs the current one) or "Set a password".
     hasPassword: user.passwordHash !== null,
+    // Null until set (R-34). A number, not Prisma's Decimal string.
+    openingBalance: user.openingBalance === null ? null : toNumber(user.openingBalance),
   };
 }

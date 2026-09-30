@@ -30,6 +30,10 @@ model User {
   // When this account proved it owns its email address (a consumed signup code, or Google).
   // NULL = never proven, which decides what a later Google sign-in may do (D-19, D-22).
   emailVerifiedAt DateTime?
+  // The user's cash before their first entry (D-62, D-63). It counts in every cash and net-worth
+  // figure and is never income or spending. NULL = never set (counted as 0), which is when Home
+  // asks for it. Set from "what do you have today" by PUT /opening-balance.
+  openingBalance  Decimal?  @db.Decimal(14, 2)
   createdAt       DateTime  @default(now())
 
   categories   Category[]
@@ -174,6 +178,9 @@ model Loan {
   dueDate       DateTime?
   status        LoanStatus @default(PENDING)
   notes         String?
+  // When the money moved (D-62): the loan counts from this date, and its opening movement is dated
+  // with it. Never in the future (D-63). Defaults to now, so an older client can still insert.
+  date          DateTime   @default(now())
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 

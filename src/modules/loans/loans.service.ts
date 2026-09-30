@@ -1,7 +1,7 @@
 import { Prisma, TransactionKind } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
-import { monthKeyInZone } from "../../utils/date";
+import { dayKeyInZone, monthKeyInZone, startOfTomorrowInZone } from "../../utils/date";
 import { invalidateUserDashboard } from "../../lib/cache";
 import { inSerializableTransaction } from "../../lib/serializable";
 import { clampPositive, min, money, subtract, toNumber } from "../../utils/money";
@@ -19,6 +19,8 @@ export interface CreateLoanInput {
    * ("I've owed Ali 5,000 since last year") without fabricating a cash movement today.
    */
   recordCashflow?: boolean;
+  /** When the money moved (D-62). Defaults to now; never in the future (D-63). */
+  date?: Date;
 }
 
 export interface UpdateLoanInput {
@@ -26,6 +28,45 @@ export interface UpdateLoanInput {
   amount?: number;
   dueDate?: string | null;
   notes?: string | null;
+  date?: Date;
+}
+
+const SETTLEMENT_KINDS: TransactionKind[] = ["COLLECT", "REPAY"];
+
+/**
+ * A loan as of the end of `month` (D-9, D-62): whether it's open by then, what had been repaid by
+ * then, and whether it was still outstanding when the month began. The dashboard's debt position
+ * and `GET /loans?month` both use this, so the Loans tab's totals and Home's always agree.
+ */
+export function loanAsOfMonth(
+  loan: { amount: Prisma.Decimal; date: Date },
+  settlements: { amount: Prisma.Decimal; month: string }[],
+  month: string,
+  timezone: string
+) {
+  const opened = monthKeyInZone(loan.date, timezone) <= month;
+  const repaidBy = settlements.filter((s) => s.month <= month).reduce((t, s) => t.add(s.amount), money(0));
+  const repaidBefore = settlements.filter((s) => s.month < month).reduce((t, s) => t.add(s.amount), money(0));
+  const settledAmount = min(repaidBy, loan.amount);
+  const remaining = clampPositive(subtract(loan.amount, repaidBy));
+  return {
+    opened,
+    // Shown in `month` if open by its end and not already cleared before it began.
+    visible: opened && subtract(loan.amount, repaidBefore).greaterThan(0),
+    settledAmount,
+    remaining,
+    status: (remaining.isZero() ? "SETTLED" : settledAmount.greaterThan(0) ? "PARTIAL" : "PENDING") as
+      | "PENDING"
+      | "PARTIAL"
+      | "SETTLED",
+  };
+}
+
+/** A loan's date must not be in the user's future (D-63). */
+function assertNotFuture(date: Date, timezone: string, what: string) {
+  if (date.getTime() >= startOfTomorrowInZone(new Date(), timezone).getTime()) {
+    throw new AppError(400, `${what} can't be in the future`);
+  }
 }
 
 function serializeLoan(loan: {
@@ -38,6 +79,7 @@ function serializeLoan(loan: {
   dueDate: Date | null;
   status: string;
   notes: string | null;
+  date: Date;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -53,25 +95,65 @@ function serializeLoan(loan: {
     dueDate: loan.dueDate ? loan.dueDate.toISOString() : null,
     status: loan.status,
     notes: loan.notes,
+    date: loan.date.toISOString(),
     createdAt: loan.createdAt.toISOString(),
     updatedAt: loan.updatedAt.toISOString(),
   };
 }
 
-export async function getLoans(
-  userId: string,
-  filters?: { type?: "LENT" | "BORROWED"; status?: "PENDING" | "PARTIAL" | "SETTLED" }
-) {
+type LoanFilters = { type?: "LENT" | "BORROWED"; status?: "PENDING" | "PARTIAL" | "SETTLED" };
+
+function loanWhere(userId: string, filters?: LoanFilters): Prisma.LoanWhereInput {
   const where: Prisma.LoanWhereInput = { userId };
   if (filters?.type) where.type = filters.type;
   if (filters?.status) where.status = filters.status;
+  return where;
+}
 
+/** Every loan, as of today. Unchanged for older builds. */
+export async function getLoans(userId: string, filters?: LoanFilters) {
   const loans = await prisma.loan.findMany({
-    where,
+    where: loanWhere(userId, filters),
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
   });
-
   return loans.map(serializeLoan);
+}
+
+/**
+ * The Loans tab's month view (R-41): the loans visible in `month`, each carrying its position as
+ * of that month's end in `asOf`. The top-level fields stay today's, because the settle sheet acts
+ * on today's loan (D-63).
+ */
+export async function getLoansForMonth(userId: string, month: string, filters?: LoanFilters) {
+  const where = loanWhere(userId, filters);
+  const [loans, settlements, timezone] = await Promise.all([
+    prisma.loan.findMany({ where, orderBy: [{ date: "desc" }, { id: "desc" }] }),
+    prisma.transaction.findMany({
+      where: { userId, loanId: { not: null }, kind: { in: SETTLEMENT_KINDS } },
+      select: { loanId: true, amount: true, month: true },
+    }),
+    userTimezone(prisma, userId),
+  ]);
+  const byLoan = new Map<string, { amount: Prisma.Decimal; month: string }[]>();
+  for (const s of settlements) {
+    if (!s.loanId) continue;
+    byLoan.set(s.loanId, [...(byLoan.get(s.loanId) ?? []), s]);
+  }
+
+  return loans.flatMap((loan) => {
+    const asOf = loanAsOfMonth(loan, byLoan.get(loan.id) ?? [], month, timezone);
+    if (!asOf.visible) return [];
+    return [
+      {
+        ...serializeLoan(loan),
+        asOf: {
+          settledAmount: toNumber(asOf.settledAmount),
+          remainingAmount: toNumber(asOf.remaining),
+          status: asOf.status,
+        },
+      },
+    ];
+  });
 }
 
 export async function getLoansSummary(userId: string) {
@@ -130,6 +212,10 @@ export async function createLoan(userId: string, input: CreateLoanInput) {
 
   const recordCashflow = input.recordCashflow ?? true;
   const personName = input.personName.trim();
+  const timezone = await userTimezone(prisma, userId);
+  // When the money moved: now unless the user backdated it, never in the future (D-62, D-63).
+  const date = input.date ?? new Date();
+  assertNotFuture(date, timezone, "A loan's date");
 
   const loan = await prisma.$transaction(async (tx) => {
     const created = await tx.loan.create({
@@ -137,6 +223,7 @@ export async function createLoan(userId: string, input: CreateLoanInput) {
         userId,
         type: input.type,
         personName,
+        date,
         amount: money(input.amount),
         dueDate: input.dueDate ? new Date(input.dueDate) : null,
         notes: input.notes?.trim() || null,
@@ -149,16 +236,13 @@ export async function createLoan(userId: string, input: CreateLoanInput) {
     // asymmetric: settlement credited cash with nothing ever having debited it, so lending
     // money and collecting it back invented net worth.
     if (recordCashflow) {
-      const now = new Date();
-      const timezone = await userTimezone(tx, userId);
-
       await tx.transaction.create({
         data: {
           userId,
           kind: input.type === "LENT" ? "LEND_OUT" : "BORROW_IN",
           amount: money(input.amount),
-          date: now,
-          month: monthKeyInZone(now, timezone),
+          date,
+          month: monthKeyInZone(date, timezone),
           description:
             input.type === "LENT" ? `Lent to ${personName}` : `Borrowed from ${personName}`,
           paymentMethod: "Cash",
@@ -200,6 +284,16 @@ export async function settleLoan(
       throw new AppError(400, "Loan is already fully settled");
     }
 
+    const date = settledOn ?? new Date();
+    const timezone = await userTimezone(tx, userId);
+    // A repayment happens on or after the loan's day, and never in the future (D-63). Compared as
+    // calendar days, so a repayment the same day as the loan is fine whatever the hour. Checked
+    // before anything is written.
+    assertNotFuture(date, timezone, "A repayment's date");
+    if (dayKeyInZone(date, timezone) < dayKeyInZone(loan.date, timezone)) {
+      throw new AppError(400, "A repayment can't be dated before the loan");
+    }
+
     const requested = paymentAmount !== undefined ? money(paymentAmount) : remaining;
     const payment = min(requested, remaining);
 
@@ -214,8 +308,6 @@ export async function settleLoan(
       },
     });
 
-    const date = settledOn ?? new Date();
-    const timezone = await userTimezone(tx, userId);
     const kind: TransactionKind = loan.type === "LENT" ? "COLLECT" : "REPAY";
 
     await tx.transaction.create({
@@ -242,11 +334,36 @@ export async function settleLoan(
 }
 
 export async function updateLoan(userId: string, loanId: string, input: UpdateLoanInput) {
-  const updated = await prisma.$transaction(async (tx) => {
+  // Serializable: the date and amount checks read repayments and then write (D-63).
+  const updated = await inSerializableTransaction(async (tx) => {
     const loan = await tx.loan.findFirst({ where: { id: loanId, userId } });
     if (!loan) throw new AppError(404, "Loan record not found");
 
     const data: Prisma.LoanUpdateInput = {};
+    const opening = await tx.transaction.findFirst({
+      where: { loanId, kind: loan.type === "LENT" ? "LEND_OUT" : "BORROW_IN" },
+    });
+
+    if (input.date !== undefined) {
+      const timezone = await userTimezone(tx, userId);
+      assertNotFuture(input.date, timezone, "A loan's date");
+      const firstRepayment = await tx.transaction.findFirst({
+        where: { loanId, kind: { in: SETTLEMENT_KINDS } },
+        orderBy: { date: "asc" },
+      });
+      if (firstRepayment && dayKeyInZone(input.date, timezone) > dayKeyInZone(firstRepayment.date, timezone)) {
+        throw new AppError(400, "The loan's date can't be after its first repayment");
+      }
+      data.date = input.date;
+      // The principal moved on the new date. A loan recorded without cashflow has no movement, so
+      // only its as-of debt moves.
+      if (opening) {
+        await tx.transaction.update({
+          where: { id: opening.id },
+          data: { date: input.date, month: monthKeyInZone(input.date, timezone) },
+        });
+      }
+    }
     if (input.personName !== undefined) data.personName = input.personName.trim();
     if (input.dueDate !== undefined) {
       data.dueDate = input.dueDate ? new Date(input.dueDate) : null;
@@ -275,9 +392,6 @@ export async function updateLoan(userId: string, loanId: string, input: UpdateLo
 
       // Keep the opening movement in step with the principal, otherwise the cash position
       // silently drifts from the loan it describes.
-      const opening = await tx.transaction.findFirst({
-        where: { loanId, kind: loan.type === "LENT" ? "LEND_OUT" : "BORROW_IN" },
-      });
       if (opening) {
         await tx.transaction.update({ where: { id: opening.id }, data: { amount } });
       }

@@ -1,11 +1,26 @@
 import { Prisma, TransactionKind } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
-import { DEFAULT_TIMEZONE, monthKeyInZone, trailingMonths } from "../../utils/date";
+import {
+  DEFAULT_TIMEZONE,
+  datePartsInZone,
+  dayKeyInZone,
+  monthKeyInZone,
+  startOfDayInZone,
+  startOfTomorrowInZone,
+  trailingMonths,
+} from "../../utils/date";
 import { cache } from "../../lib/cache";
 import { CASH_SIGN } from "../transactions/transactions.service";
 import { clampPositive, money, subtract, toNumber } from "../../utils/money";
+import { loanAsOfMonth } from "../loans/loans.service";
 
-type Row = { kind: TransactionKind; amount: Prisma.Decimal; categoryId: string | null; needWant: string | null };
+type Row = {
+  kind: TransactionKind;
+  amount: Prisma.Decimal;
+  categoryId: string | null;
+  needWant: string | null;
+  date: Date;
+};
 
 const sum = (rows: { amount: Prisma.Decimal }[]) =>
   rows.reduce((total, r) => total.add(r.amount), money(0));
@@ -18,11 +33,16 @@ const ofKind = (rows: Row[], ...kinds: TransactionKind[]) =>
  *
  * Reads the unified ledger, which is what makes the headline numbers honest:
  * - spending and budgets count SPEND only, so lending money no longer blows a budget;
- * - cash on hand sums all six kinds, so lending and collecting nets to zero;
+ * - cash on hand sums every kind, plus the user's opening balance, so lending and collecting nets to
+ *   zero and the figure can match real money (D-62);
  * - net worth folds in what is still owed in each direction.
  */
 export async function getDashboardSummary(userId: string, month: string): Promise<DashboardSummary> {
-  const cacheKey = `dashboard_${userId}_${month}`;
+  // Today's date (user's timezone) is in the key: "up to today" figures and the comparison's day
+  // change at midnight, so yesterday's cached answer must not be served today.
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { timezone: true } });
+  const today = dayKeyInZone(new Date(), user?.timezone ?? DEFAULT_TIMEZONE);
+  const cacheKey = `dashboard_${userId}_${month}_${today}`;
   const cached = cache.get<DashboardSummary>(cacheKey);
   if (cached) return cached;
 
@@ -38,19 +58,21 @@ async function buildDashboardSummary(userId: string, month: string) {
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { timezone: true },
+    select: { timezone: true, openingBalance: true },
   });
   const timezone = user?.timezone ?? DEFAULT_TIMEZONE;
+  // Cash before the first entry (D-62). Null = never set, counted as 0.
+  const openingBalance = user?.openingBalance ?? money(0);
 
   const [monthRows, prevMonthRows, toDateRows, toPrevMonthRows, budgets, prevMonthBudgets, categories, allLoans, settlementRows] =
     await Promise.all([
       prisma.transaction.findMany({
         where: { userId, month },
-        select: { kind: true, amount: true, categoryId: true, needWant: true },
+        select: { kind: true, amount: true, categoryId: true, needWant: true, date: true },
       }),
       prisma.transaction.findMany({
         where: { userId, month: prevMonth, kind: "SPEND" },
-        select: { kind: true, amount: true, categoryId: true, needWant: true },
+        select: { kind: true, amount: true, categoryId: true, needWant: true, date: true },
       }),
       // Everything up to and including the selected month — the closing position.
       prisma.transaction.groupBy({
@@ -89,8 +111,8 @@ async function buildDashboardSummary(userId: string, month: string) {
   const cashFrom = (rows: { kind: TransactionKind; _sum: { amount: Prisma.Decimal | null } }[]) =>
     rows.reduce((total, r) => total.add((r._sum.amount ?? money(0)).mul(CASH_SIGN[r.kind])), money(0));
 
-  const closingCash = cashFrom(toDateRows);
-  const openingCash = cashFrom(toPrevMonthRows);
+  const closingCash = cashFrom(toDateRows).add(openingBalance);
+  const openingCash = cashFrom(toPrevMonthRows).add(openingBalance);
 
   /**
    * Outstanding debt **as of the end of the selected month**.
@@ -104,22 +126,22 @@ async function buildDashboardSummary(userId: string, month: string) {
    * created with `recordCashflow: false`: it has no opening cash movement but is still a real
    * obligation.
    */
-  function debtPositionAsOf(periodMonth: string) {
-    const settledByLoan = new Map<string, Prisma.Decimal>();
-    for (const s of settlementRows) {
-      if (!s.loanId || s.month > periodMonth) continue;
-      settledByLoan.set(s.loanId, (settledByLoan.get(s.loanId) ?? money(0)).add(s.amount));
-    }
+  const settlementsByLoan = new Map<string, { amount: Prisma.Decimal; month: string }[]>();
+  for (const s of settlementRows) {
+    if (!s.loanId) continue;
+    settlementsByLoan.set(s.loanId, [...(settlementsByLoan.get(s.loanId) ?? []), s]);
+  }
 
+  // Shared with GET /loans?month, so the Loans tab's totals always equal these (R-41). A loan counts
+  // from its own date (D-62), not from when it was recorded.
+  function debtPositionAsOf(periodMonth: string) {
     let lent = money(0);
     let borrowed = money(0);
     for (const loan of allLoans) {
-      if (monthKeyInZone(loan.createdAt, timezone) > periodMonth) continue; // not yet opened
-      const outstanding = clampPositive(
-        subtract(loan.amount, settledByLoan.get(loan.id) ?? money(0))
-      );
-      if (loan.type === "LENT") lent = lent.add(outstanding);
-      else borrowed = borrowed.add(outstanding);
+      const position = loanAsOfMonth(loan, settlementsByLoan.get(loan.id) ?? [], periodMonth, timezone);
+      if (!position.opened) continue;
+      if (loan.type === "LENT") lent = lent.add(position.remaining);
+      else borrowed = borrowed.add(position.remaining);
     }
     return { lent, borrowed };
   }
@@ -256,8 +278,94 @@ async function buildDashboardSummary(userId: string, month: string) {
       isOverdue: l.dueDate!.getTime() < startOfToday.getTime(),
     }));
 
+  // --- Home v3 (R-35, R-39) ----------------------------------------------------------------
+  // The month's place relative to today, in the user's timezone (not UTC, as the pacing above is).
+  // `now` is the pacing code's clock, above.
+  const currentMonth = monthKeyInZone(now, timezone);
+  const period: "past" | "current" | "future" =
+    month < currentMonth ? "past" : month > currentMonth ? "future" : "current";
+  // "Up to today" = dated before the start of tomorrow (a picked day is saved at 12:00, D-63).
+  const endOfToday = startOfTomorrowInZone(now, timezone);
+
+  // Cash available: this month's story (D-63). The cash at the start of the month, plus the month's
+  // movements (for the current month, only those up to today), is the figure.
+  const storyRows = period === "current" ? monthRows.filter((r) => r.date < endOfToday) : monthRows;
+  const story = {
+    startOfMonth: openingCash,
+    income: sum(ofKind(storyRows, "EARN")),
+    expenses: sum(ofKind(storyRows, "SPEND")),
+    lent: sum(ofKind(storyRows, "LEND_OUT")),
+    borrowed: sum(ofKind(storyRows, "BORROW_IN")),
+    collected: sum(ofKind(storyRows, "COLLECT")),
+    repaid: sum(ofKind(storyRows, "REPAY")),
+  };
+  const cashAvailableAmount = story.startOfMonth
+    .add(story.income)
+    .add(story.borrowed)
+    .add(story.collected)
+    .sub(story.expenses)
+    .sub(story.lent)
+    .sub(story.repaid);
+
+  // Spending against the previous month. For the current month both sides stop at the same day
+  // (day N), or "you spent less than last month" would be true on every day but the last (R-39).
+  const byCategory = (rows: Row[]) => {
+    const totals = new Map<string, Prisma.Decimal>();
+    for (const r of rows) {
+      if (!r.categoryId) continue;
+      totals.set(r.categoryId, (totals.get(r.categoryId) ?? money(0)).add(r.amount));
+    }
+    return [...totals].map(([categoryId, amount]) => ({ categoryId, amount: toNumber(amount) }));
+  };
+  let comparison: {
+    currentTotal: number;
+    currentByCategory: { categoryId: string; amount: number }[];
+    previousTotal: number;
+    previousByCategory: { categoryId: string; amount: number }[];
+    toDay: number | null;
+  } | null = null;
+  if (period !== "future") {
+    let currentSpend = ofKind(monthRows, "SPEND");
+    let previousSpend = prevMonthRows;
+    let toDay: number | null = null;
+    if (period === "current") {
+      toDay = datePartsInZone(now, timezone).day;
+      currentSpend = currentSpend.filter((r) => r.date < endOfToday);
+      // The previous month's rows up to the end of its day N. On the 31st against a 30-day month the
+      // cutoff falls after that month ends, which simply keeps all of it: the rows are already only
+      // that month's.
+      const [prevYear, prevMonthNum] = prevMonth.split("-").map(Number);
+      const previousCutoff = startOfDayInZone(prevYear, prevMonthNum, toDay + 1, timezone);
+      previousSpend = previousSpend.filter((r) => r.date < previousCutoff);
+    }
+    comparison = {
+      currentTotal: toNumber(sum(currentSpend)),
+      currentByCategory: byCategory(currentSpend),
+      previousTotal: toNumber(sum(previousSpend)),
+      previousByCategory: byCategory(previousSpend),
+      toDay,
+    };
+  }
+
   const result = {
     month,
+
+    cashAvailable: {
+      amount: toNumber(cashAvailableAmount),
+      period,
+      /** Null until the user sets it: Home asks for it then (R-34). */
+      openingBalance: user?.openingBalance === null || user?.openingBalance === undefined ? null : toNumber(user.openingBalance),
+      breakdown: {
+        startOfMonth: toNumber(story.startOfMonth),
+        income: toNumber(story.income),
+        expenses: toNumber(story.expenses),
+        lent: toNumber(story.lent),
+        borrowed: toNumber(story.borrowed),
+        collected: toNumber(story.collected),
+        repaid: toNumber(story.repaid),
+      },
+    },
+    comparison,
 
     // --- Balance sheet: measured at the END of this month ---------------------------------
     cashOnHand: toNumber(closingCash),
