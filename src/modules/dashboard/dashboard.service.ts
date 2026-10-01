@@ -153,13 +153,21 @@ async function buildDashboardSummary(userId: string, month: string) {
   function debtPositionAsOf(periodMonth: string) {
     let lent = money(0);
     let borrowed = money(0);
+    // Of those balances, what has been repaid in later months (a past month's note).
+    let lentRepaidSince = money(0);
+    let borrowedRepaidSince = money(0);
     for (const loan of allLoans) {
       const position = loanAsOfMonth(loan, settlementsByLoan.get(loan.id) ?? [], periodMonth, timezone);
       if (!position.opened) continue;
-      if (loan.type === "LENT") lent = lent.add(position.remaining);
-      else borrowed = borrowed.add(position.remaining);
+      if (loan.type === "LENT") {
+        lent = lent.add(position.remaining);
+        lentRepaidSince = lentRepaidSince.add(position.repaidSince);
+      } else {
+        borrowed = borrowed.add(position.remaining);
+        borrowedRepaidSince = borrowedRepaidSince.add(position.repaidSince);
+      }
     }
-    return { lent, borrowed };
+    return { lent, borrowed, lentRepaidSince, borrowedRepaidSince };
   }
 
   const closingDebt = debtPositionAsOf(month);
@@ -436,6 +444,9 @@ async function buildDashboardSummary(userId: string, month: string) {
       totalLent: toNumber(totalLentOutstanding),
       totalBorrowed: toNumber(totalBorrowedOutstanding),
       net: toNumber(subtract(totalLentOutstanding, totalBorrowedOutstanding)),
+      // Of the two totals above, what has been paid back in later months. 0 for the current month.
+      lentRepaidSince: toNumber(closingDebt.lentRepaidSince),
+      borrowedRepaidSince: toNumber(closingDebt.borrowedRepaidSince),
     },
     upcomingObligations,
 

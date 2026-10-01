@@ -321,6 +321,8 @@ describe("CON-001: every endpoint the app calls returns the shape the app reads"
   it("money: categories, budgets, transactions, loans, dashboard, and the legacy reads", async () => {
     googleSays("money@gmail.com", "g-money");
     const token = (await call("POST", "/auth/google", { body: { idToken: "t" } })).json.token;
+    // Joined before this month, so entries dated from its 1st are allowed (D-67).
+    await prisma.user.update({ where: { email: "money@gmail.com" }, data: { createdAt: new Date("2000-01-01T00:00:00Z") } });
     const month = currentMonth();
 
     expectShape(z.array(Category).min(1), (await call("GET", "/categories", { token })).json, "GET /categories");

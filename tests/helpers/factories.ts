@@ -6,7 +6,7 @@ import { monthKeyInZone } from "../../src/utils/date";
 /** Deterministic fixtures. No randomness unless a test asks for it explicitly. */
 
 export async function makeUser(
-  overrides: { email?: string; timezone?: string; currency?: string } = {}
+  overrides: { email?: string; timezone?: string; currency?: string; createdAt?: Date } = {}
 ) {
   const email = overrides.email ?? `user-${Math.random().toString(36).slice(2, 10)}@test.local`;
   return prisma.user.create({
@@ -16,6 +16,9 @@ export async function makeUser(
       passwordHash: "$2a$10$notarealhashnotarealhashnotarealhashnotarealhash",
       timezone: overrides.timezone ?? "Asia/Karachi",
       currency: overrides.currency ?? "PKR",
+      // Joined long ago, so a test can date its entries freely: nothing may be dated before the
+      // join day (D-67). Tests about the join month itself pass their own.
+      createdAt: overrides.createdAt ?? new Date("2000-01-01T00:00:00Z"),
       categories: { create: DEFAULT_CATEGORIES.map((c) => ({ ...c, isDefault: true })) },
     },
     include: { categories: true },

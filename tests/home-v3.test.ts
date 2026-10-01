@@ -53,8 +53,9 @@ const tokenFor = (userId: string) => signToken({ userId, tv: 0 });
 // ------------------------------------------------------------------------------------ OPN
 describe("OPN: opening cash", () => {
   it("OPN-001: it lifts cash and net worth by the same amount from the first month on, and nothing else", async () => {
-    const plain = await makeUser();
-    const withOpening = await makeUser();
+    // Joined now: the August entries predate the account, like history from before D-67.
+    const plain = await makeUser({ createdAt: new Date() });
+    const withOpening = await makeUser({ createdAt: new Date() });
     for (const user of [plain, withOpening]) {
       const food = await categoryFor(user.id);
       await prisma.budget.create({ data: { userId: user.id, categoryId: food.id, amount: new Prisma.Decimal(4_000), month: "2026-08" } });
@@ -82,7 +83,7 @@ describe("OPN: opening cash", () => {
   });
 
   it("OPN-002: netWorth = opening + ΣEARN − ΣSPEND, and month-to-month continuity holds", async () => {
-    const user = await makeUser();
+    const user = await makeUser({ createdAt: new Date() });
     await prisma.user.update({ where: { id: user.id }, data: { openingBalance: new Prisma.Decimal(7_500) } });
     await earn(user.id, 30_000, dateOf("2026-06-01"));
     await spend(user.id, 4_000, dateOf("2026-06-15"));
@@ -381,7 +382,7 @@ describe("LTL: dated loans and the month timeline", () => {
     await settleLoan(user.id, loan.id, 2_000, pkt("2026-09-10T12:00:00"));
 
     const [aug] = await monthView(user.id, "2026-08");
-    expect(aug.asOf).toEqual({ settledAmount: 0, remainingAmount: 5_000, status: "PENDING" });
+    expect(aug.asOf).toEqual({ settledAmount: 0, remainingAmount: 5_000, status: "PENDING", repaidSince: 2_000, settledOn: null });
     expect([aug.settledAmount, aug.status]).toEqual([2_000, "PARTIAL"]);
   });
 
