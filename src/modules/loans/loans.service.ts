@@ -159,7 +159,7 @@ export async function getLoansForMonth(userId: string, month: string, filters?: 
           // After this month: how much of `remainingAmount` has been repaid since, and the day the
           // loan was cleared if it has been (Bilal: a past month mustn't look stale).
           repaidSince: toNumber(asOf.repaidSince),
-          settledOn: settledOnAfter(loan, byLoan.get(loan.id) ?? [], month),
+          settledOn: asOf.remaining.greaterThan(0) ? settledOnAfter(loan, byLoan.get(loan.id) ?? [], month) : null,
         },
       },
     ];
@@ -371,7 +371,7 @@ export async function updateLoan(userId: string, loanId: string, input: UpdateLo
     if (input.date !== undefined) {
       const timezone = await userTimezone(tx, userId);
       assertNotFuture(input.date, timezone, "A loan's date");
-      await assertNotBeforeJoin(tx, userId, input.date);
+      await assertNotBeforeJoin(tx, userId, input.date, loan.date);
       const firstRepayment = await tx.transaction.findFirst({
         where: { loanId, kind: { in: SETTLEMENT_KINDS } },
         orderBy: { date: "asc" },

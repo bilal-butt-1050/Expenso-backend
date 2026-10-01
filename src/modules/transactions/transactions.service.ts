@@ -166,13 +166,6 @@ async function assertCategoryOwnership(userId: string, categoryId: string) {
   if (!category) throw new AppError(400, "Invalid category");
 }
 
-async function getUserTimezone(userId: string): Promise<string> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { timezone: true },
-  });
-  return user?.timezone ?? "Asia/Karachi";
-}
 
 export async function createTransaction(userId: string, input: CreateTransactionInput) {
   return (await createOrReplayTransaction(userId, input)).transaction;
@@ -203,8 +196,7 @@ export async function createOrReplayTransaction(
     throw new AppError(400, "A source is required for income");
   }
 
-  await assertNotBeforeJoin(prisma, userId, input.date);
-  const timezone = await getUserTimezone(userId);
+  const timezone = await assertNotBeforeJoin(prisma, userId, input.date);
 
   let created;
   try {
@@ -283,8 +275,7 @@ export async function updateTransaction(
   if (input.paymentMethod !== undefined) data.paymentMethod = input.paymentMethod;
 
   if (input.date !== undefined) {
-    await assertNotBeforeJoin(prisma, userId, input.date);
-    const timezone = await getUserTimezone(userId);
+    const timezone = await assertNotBeforeJoin(prisma, userId, input.date, existing.date);
     data.date = input.date;
     data.month = monthKeyInZone(input.date, timezone);
   }

@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { assertNotBeforeJoin } from "../../lib/joinDate";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 import { monthKeyInZone } from "../../utils/date";
@@ -85,6 +86,7 @@ async function userTimezone(userId: string) {
 
 export async function createExpense(userId: string, input: ExpenseInput) {
   await assertCategoryOwnership(userId, input.categoryId);
+  await assertNotBeforeJoin(prisma, userId, input.date);
 
   const created = await prisma.transaction.create({
     data: {
@@ -117,7 +119,7 @@ export async function updateExpense(userId: string, id: string, input: Partial<E
   if (input.categoryId !== undefined) data.category = { connect: { id: input.categoryId } };
   if (input.date !== undefined) {
     data.date = input.date;
-    data.month = monthKeyInZone(input.date, await userTimezone(userId));
+    data.month = monthKeyInZone(input.date, await assertNotBeforeJoin(prisma, userId, input.date, existing.date));
   }
 
   void existing;

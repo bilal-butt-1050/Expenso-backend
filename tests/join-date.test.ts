@@ -86,6 +86,37 @@ describe("JOIN: history starts on the join day", () => {
   });
 });
 
+describe("JOIN: entries from before the rule", () => {
+  it("JOIN-003: an entry already dated before the join day stays editable, but can't move earlier", async () => {
+    const { user, token } = await joinedOn("2026-08-10T15:00:00");
+    // Backdated before D-67 existed.
+    const old = await prisma.transaction.create({
+      data: { userId: user.id, kind: "EARN", amount: 100, source: "Salary", date: pkt("2026-08-01T12:00:00"), month: "2026-08" },
+    });
+    // The app sends the date on every edit, unchanged here.
+    const fixed = await call(token, "PATCH", `/transactions/${old.id}`, { amount: 150, date: old.date.toISOString() });
+    expect(fixed.status).toBe(200);
+    expect(fixed.json.amount).toBe(150);
+    // Later, still before joining: not earlier than it was, so allowed.
+    expect((await call(token, "PATCH", `/transactions/${old.id}`, { date: pkt("2026-08-05T12:00:00").toISOString() })).status).toBe(200);
+    // Earlier than it was, and before joining: refused.
+    expect((await call(token, "PATCH", `/transactions/${old.id}`, { date: pkt("2026-07-20T12:00:00").toISOString() })).status).toBe(400);
+  });
+
+  it("JOIN-004: a repayment dated after the loan but before the join day is refused by the join rule", async () => {
+    const { user, token } = await joinedOn("2026-08-10T15:00:00");
+    // A loan from before the rule, dated 1 Aug.
+    const loan = await prisma.loan.create({
+      data: { userId: user.id, type: "LENT", personName: "Ali", amount: 500, date: pkt("2026-08-01T12:00:00") },
+    });
+    const repaid = await call(token, "PATCH", `/loans/${loan.id}/settle`, {
+      paymentAmount: 100, date: pkt("2026-08-05T12:00:00").toISOString(),
+    });
+    expect(repaid.status).toBe(400);
+    expect(repaid.json.error).toMatch(/before you joined/);
+  });
+});
+
 describe("ORD/CAT: small fixes from the end-to-end test", () => {
   it("ORD-001: a day's entries list newest-recorded first, and paging across the tie loses nothing", async () => {
     const { token } = await joinedOn("2026-08-01T09:00:00");
