@@ -10,6 +10,7 @@ import {
   trailingMonths,
 } from "../../utils/date";
 import { cache } from "../../lib/cache";
+import { AppError } from "../../utils/asyncHandler";
 import { CASH_SIGN } from "../transactions/transactions.service";
 import { clampPositive, money, subtract, toNumber } from "../../utils/money";
 import { loanAsOfMonth } from "../loans/loans.service";
@@ -41,7 +42,10 @@ export async function getDashboardSummary(userId: string, month: string): Promis
   // Today's date (user's timezone) is in the key: "up to today" figures and the comparison's day
   // change at midnight, so yesterday's cached answer must not be served today.
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { timezone: true } });
-  const today = dayKeyInZone(new Date(), user?.timezone ?? DEFAULT_TIMEZONE);
+  // A deleted account has no figures: without this, a request in flight during the deletion could
+  // build and cache them again after the cache was cleared.
+  if (!user) throw new AppError(404, "User not found");
+  const today = dayKeyInZone(new Date(), user.timezone ?? DEFAULT_TIMEZONE);
   const cacheKey = `dashboard_${userId}_${month}_${today}`;
   const cached = cache.get<DashboardSummary>(cacheKey);
   if (cached) return cached;
@@ -319,6 +323,14 @@ async function buildDashboardSummary(userId: string, month: string) {
     .sub(story.lent)
     .sub(story.repaid);
 
+  // Spent today (current month only): what went out since the start of the user's day.
+  let spentToday: Prisma.Decimal | null = null;
+  if (period === "current") {
+    const { year, month: m, day } = datePartsInZone(now, timezone);
+    const startOfToday = startOfDayInZone(year, m, day, timezone);
+    spentToday = sum(ofKind(monthRows.filter((r) => r.date >= startOfToday && r.date < endOfToday), "SPEND"));
+  }
+
   // Spending against the previous month. For the current month both sides stop at the same day
   // (day N), or "you spent less than last month" would be true on every day but the last (R-39).
   const byCategory = (rows: Row[]) => {
@@ -378,6 +390,8 @@ async function buildDashboardSummary(userId: string, month: string) {
       },
     },
     comparison,
+    /** Spending dated today, in the user's timezone. Null for any month but the current one. */
+    spentToday: spentToday === null ? null : toNumber(spentToday),
 
     // --- Balance sheet: measured at the END of this month ---------------------------------
     cashOnHand: toNumber(closingCash),

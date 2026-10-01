@@ -4,7 +4,7 @@ import { emailSchema } from "../../utils/validation";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
 import { isValidTimeZone } from "../../utils/date";
-import { registerUser, loginUser, getUserById, updateUserProfile, loginWithGoogle, changePassword } from "./auth.service";
+import { registerUser, loginUser, getUserById, updateUserProfile, loginWithGoogle, changePassword, deleteAccount } from "./auth.service";
 import { generateAndSendOtp } from "./otp.service";
 
 export const authRouter = Router();
@@ -132,3 +132,21 @@ authRouter.patch(
     res.json({ message: "Password updated successfully", token });
   })
 );
+
+/**
+ * Deletes the signed-in user's account and all their data. The body must say so explicitly, which
+ * stops an accidental call; it is not a security control (a captured request carries it too).
+ * Re-authentication before deleting is a known follow-up, due before other users are invited.
+ */
+const deleteAccountSchema = z.object({ confirm: z.literal("DELETE") });
+
+authRouter.delete(
+  "/account",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    deleteAccountSchema.parse(req.body);
+    await deleteAccount(req.userId!);
+    res.status(204).end();
+  })
+);
+

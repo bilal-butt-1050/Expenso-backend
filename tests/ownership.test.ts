@@ -145,12 +145,13 @@ const SELF_OR_PUBLIC = [
   "POST /auth/google",
   "PATCH /auth/profile",
   "PATCH /auth/password",
+  "DELETE /auth/account", // acts on req.userId only; covered by DEL-001/002
   // Sets the caller's own opening cash: there's no id to point at someone else's.
   "PUT /opening-balance/",
 ];
 
 describe("route coverage", () => {
-  it("every mounted route is classified for the ownership tests (36 endpoints)", () => {
+  it("every mounted route is classified for the ownership tests (37 endpoints)", () => {
     const mounted: [string, Router][] = [
       ["/auth", authRouter], ["/budgets", budgetsRouter], ["/categories", categoriesRouter],
       ["/dashboard", dashboardRouter], ["/expenses", expensesRouter], ["/income", incomeRouter],
@@ -167,7 +168,7 @@ describe("route coverage", () => {
     const classified = [...READS, ...MUTATIONS_BY_ID, ...CREATES, ...SELF_OR_PUBLIC];
 
     expect(actual.sort()).toEqual(classified.sort());
-    expect(actual).toHaveLength(36);
+    expect(actual).toHaveLength(37);
   });
 });
 
