@@ -215,7 +215,10 @@ export async function loginWithGoogle(idToken: string) {
         googleId,
         name,
         avatarUrl: picture,
-        emailVerifiedAt: now,
+        // Only an address Google is authoritative for (Gmail, or a matching Workspace domain) is
+        // proved by it. Otherwise a former owner of the address could hold the account through
+        // Google after the real owner signs in with an email code (security review of D-66).
+        emailVerifiedAt: googleIsAuthoritative(email, hd) ? now : null,
         categories: { create: DEFAULT_CATEGORIES.map((c) => ({ ...c, isDefault: true })) },
       },
     });
@@ -226,7 +229,7 @@ export async function loginWithGoogle(idToken: string) {
     throw new AppError(409, "This email is linked to a different Google account.");
   }
   if (!googleIsAuthoritative(email, hd)) {
-    throw new AppError(409, "An account with this email already exists. Sign in with your password.");
+    throw new AppError(409, "An account with this email already exists. Sign in with your email.");
   }
 
   const reclaim = !byEmail.emailVerifiedAt && Boolean(byEmail.passwordHash);
@@ -389,13 +392,15 @@ export async function verifyEmailCode(email: string, code: string) {
   }
 
   if (!user.emailVerifiedAt) {
-    const reclaim = Boolean(user.passwordHash);
-    // Conditional on it still being unproved, so two sign-ins at once bump the version once.
+    // The account never proved its address, so whatever else gets into it (a password, a Google
+    // link) may be someone else's. The code proves it now: all of that goes, and every other
+    // session ends. Unconditionally, so nothing set since the read above survives (security review).
+    // Conditional on it still being unproved, so two sign-ins at once take it back once.
     const proved = await prisma.user.updateMany({
       where: { id: user.id, emailVerifiedAt: null },
-      data: { emailVerifiedAt: new Date(), ...(reclaim ? { passwordHash: null, tokenVersion: { increment: 1 } } : {}) },
+      data: { emailVerifiedAt: new Date(), passwordHash: null, googleId: null, tokenVersion: { increment: 1 } },
     });
-    if (proved.count === 1 && reclaim) invalidateTokenVersionCache(user.id);
+    if (proved.count === 1) invalidateTokenVersionCache(user.id);
   }
   const current = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
   return {
@@ -442,7 +447,10 @@ function signSignupTicket(email: string): string {
 
 function readSignupTicket(ticket: string): string {
   try {
-    const decoded = jwt.verify(ticket, signupTicketKey()) as { purpose?: unknown; email?: unknown };
+    const decoded = jwt.verify(ticket, signupTicketKey(), { algorithms: ["HS256"] }) as {
+      purpose?: unknown;
+      email?: unknown;
+    };
     if (decoded.purpose === "signup" && typeof decoded.email === "string") return decoded.email;
   } catch {
     // Expired, tampered or not a ticket: all the same to the person.

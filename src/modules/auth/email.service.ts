@@ -33,6 +33,7 @@ function otpEmailHtml(otp: string): string {
         <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #818CF8;">${code}</span>
       </div>
       <p style="color: #9CA3AF; font-size: 13px; text-align: center;">
+        Never share this code. Expenso will never ask you for it.<br />
         This code expires in 10 minutes. If you didn't request it, you can ignore this email.
       </p>
     </div>

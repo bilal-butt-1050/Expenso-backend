@@ -180,4 +180,21 @@ describe("PWL: passwordless email", () => {
     expect(await me(old)).toBe(200);
     expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).passwordHash).not.toBeNull();
   });
+
+  it("PWL-008: an unproved Google-linked account loses the link when the address owner proves it", async () => {
+    // Created through Google for an address Google isn't authoritative for: unproved (D-66 review).
+    const held = await prisma.user.create({
+      data: { email: unique("corp"), name: "Former", googleId: `g-${Date.now()}` },
+    });
+    const formerToken = signToken({ userId: held.id, tv: held.tokenVersion });
+
+    const result = await verifyEmailCode(held.email, await codeFor(held.email));
+    expect(result.status).toBe("signedIn");
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: held.id } });
+    expect(after.googleId).toBeNull();
+    expect(after.emailVerifiedAt).not.toBeNull();
+    expect(await me(formerToken)).toBe(401);
+  });
 });
+
