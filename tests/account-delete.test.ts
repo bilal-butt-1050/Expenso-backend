@@ -6,6 +6,7 @@ import { prisma } from "../src/lib/prisma";
 import { createApp } from "../src/app";
 import { signToken } from "../src/utils/jwt";
 import { makeUser, makeLoan, categoryFor, spend, earn, dateOf } from "./helpers/factories";
+import { deleteAccount } from "../src/modules/auth/auth.service";
 
 /** DEL: in-app account deletion (Play Store requirement). */
 
@@ -32,6 +33,9 @@ async function call(method: string, path: string, token?: string, body?: unknown
 async function userWithData() {
   const user = await makeUser();
   const food = await categoryFor(user.id);
+  // Legacy rows: `expenses.categoryId` is the one RESTRICT foreign key, so the cascade order matters.
+  await prisma.expense.create({ data: { userId: user.id, categoryId: food.id, amount: 50, date: dateOf("2026-08-01"), month: "2026-08" } });
+  await prisma.otpVerification.create({ data: { email: user.email, otpHash: "x", expiresAt: new Date(Date.now() + 600_000) } });
   await prisma.budget.create({ data: { userId: user.id, categoryId: food.id, amount: new Prisma.Decimal(1_000), month: "2026-09" } });
   await earn(user.id, 5_000, dateOf("2026-09-01"));
   await spend(user.id, 700, dateOf("2026-09-02"), food.id);
@@ -71,8 +75,18 @@ describe("DEL: delete my account", () => {
 
     expect(await prisma.user.count({ where: { id: user.id } })).toBe(0);
     expect(await owned(user.id)).toEqual({ transactions: 0, loans: 0, budgets: 0, categories: 0 });
+    expect(await prisma.expense.count({ where: { userId: user.id } })).toBe(0);
+    expect(await prisma.otpVerification.count({ where: { email: user.email } })).toBe(0);
     // The same token stops working at once (the token-version cache is cleared).
     expect(await call("GET", "/auth/me", token)).toBe(401);
     expect(await owned(other.id)).toEqual(otherBefore);
+    expect(await prisma.otpVerification.count({ where: { email: other.email } })).toBe(1);
+  });
+
+  it("DEL-003: a second delete (double tap, retry) is harmless", async () => {
+    const user = await userWithData();
+    await Promise.all([deleteAccount(user.id), deleteAccount(user.id)]);
+    await deleteAccount(user.id);
+    expect(await prisma.user.count({ where: { id: user.id } })).toBe(0);
   });
 });

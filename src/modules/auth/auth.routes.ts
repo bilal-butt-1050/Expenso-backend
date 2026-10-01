@@ -134,8 +134,9 @@ authRouter.patch(
 );
 
 /**
- * Deletes the signed-in user's account and all their data. The body must say so explicitly, so a
- * stray or replayed request can't do it by accident.
+ * Deletes the signed-in user's account and all their data. The body must say so explicitly, which
+ * stops an accidental call; it is not a security control (a captured request carries it too).
+ * Re-authentication before deleting is a known follow-up, due before other users are invited.
  */
 const deleteAccountSchema = z.object({ confirm: z.literal("DELETE") });
 

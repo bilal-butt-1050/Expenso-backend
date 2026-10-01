@@ -360,9 +360,11 @@ export async function changePassword(
 export async function deleteAccount(userId: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { id: userId }, select: { email: true } });
-    if (!user) throw new AppError(404, "User not found");
+    // Already gone (a double tap, or a retry after a lost response): nothing left to do.
+    if (!user) return;
     await tx.otpVerification.deleteMany({ where: { email: user.email } });
-    await tx.user.delete({ where: { id: userId } });
+    // deleteMany, so a concurrent second request that also saw the user doesn't fail with P2025.
+    await tx.user.deleteMany({ where: { id: userId } });
   });
   invalidateTokenVersionCache(userId);
   invalidateUserDashboard(userId);
