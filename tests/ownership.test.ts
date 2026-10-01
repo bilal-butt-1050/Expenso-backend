@@ -146,12 +146,16 @@ const SELF_OR_PUBLIC = [
   "PATCH /auth/profile",
   "PATCH /auth/password",
   "DELETE /auth/account", // acts on req.userId only; covered by DEL-001/002
+  // Passwordless email (D-66): no session, and nothing of another user's to reach; PWL tests.
+  "POST /auth/email/start",
+  "POST /auth/email/verify",
+  "POST /auth/email/complete",
   // Sets the caller's own opening cash: there's no id to point at someone else's.
   "PUT /opening-balance/",
 ];
 
 describe("route coverage", () => {
-  it("every mounted route is classified for the ownership tests (37 endpoints)", () => {
+  it("every mounted route is classified for the ownership tests (40 endpoints)", () => {
     const mounted: [string, Router][] = [
       ["/auth", authRouter], ["/budgets", budgetsRouter], ["/categories", categoriesRouter],
       ["/dashboard", dashboardRouter], ["/expenses", expensesRouter], ["/income", incomeRouter],
@@ -168,7 +172,7 @@ describe("route coverage", () => {
     const classified = [...READS, ...MUTATIONS_BY_ID, ...CREATES, ...SELF_OR_PUBLIC];
 
     expect(actual.sort()).toEqual(classified.sort());
-    expect(actual).toHaveLength(37);
+    expect(actual).toHaveLength(40);
   });
 });
 

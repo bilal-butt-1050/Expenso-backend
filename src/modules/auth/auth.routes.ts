@@ -4,8 +4,18 @@ import { emailSchema } from "../../utils/validation";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
 import { isValidTimeZone } from "../../utils/date";
-import { registerUser, loginUser, getUserById, updateUserProfile, loginWithGoogle, changePassword, deleteAccount } from "./auth.service";
-import { generateAndSendOtp } from "./otp.service";
+import {
+  registerUser,
+  loginUser,
+  getUserById,
+  updateUserProfile,
+  loginWithGoogle,
+  changePassword,
+  deleteAccount,
+  verifyEmailCode,
+  completeEmailSignUp,
+} from "./auth.service";
+import { generateAndSendOtp, sendSignInCode } from "./otp.service";
 
 export const authRouter = Router();
 
@@ -67,6 +77,44 @@ authRouter.post(
     // address, so the per-IP cap is effectively global. Acceptable with one active user.
     await generateAndSendOtp(body.email, req.ip ?? "unknown");
     res.json({ message: "OTP sent" });
+  })
+);
+
+// --- Passwordless email (D-66): code to the address, then sign in, or a name for a new account. ---
+
+const emailCodeSchema = z.object({
+  email: emailSchema,
+  code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code sent to your email"),
+});
+
+const emailCompleteSchema = z.object({
+  signupTicket: z.string().min(1).max(2048),
+  name: z.string().trim().min(1, "Name is required").max(80, "Name is too long"),
+});
+
+authRouter.post(
+  "/email/start",
+  asyncHandler(async (req, res) => {
+    const body = sendOtpSchema.parse(req.body);
+    // The same answer for any address: it doesn't say whether there's an account.
+    await sendSignInCode(body.email, req.ip ?? "unknown");
+    res.json({ message: "Code sent" });
+  })
+);
+
+authRouter.post(
+  "/email/verify",
+  asyncHandler(async (req, res) => {
+    const body = emailCodeSchema.parse(req.body);
+    res.json(await verifyEmailCode(body.email, body.code));
+  })
+);
+
+authRouter.post(
+  "/email/complete",
+  asyncHandler(async (req, res) => {
+    const body = emailCompleteSchema.parse(req.body);
+    res.status(201).json(await completeEmailSignUp(body.signupTicket, body.name));
   })
 );
 

@@ -38,12 +38,24 @@ function hashOtp(email: string, otp: string): string {
   return crypto.createHmac("sha256", key).update(`${email}:${otp}`).digest("hex");
 }
 
+/** The sign-up code of the password flow (1.0 apps): refused for an address that has an account. */
 export async function generateAndSendOtp(email: string, ip: string): Promise<void> {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     throw new AppError(409, "An account with that email already exists");
   }
+  await issueCode(email, ip);
+}
 
+/**
+ * A sign-in code for passwordless email (D-66): sent whether or not the address has an account,
+ * so the answer can't be used to find out which addresses are registered.
+ */
+export async function sendSignInCode(email: string, ip: string): Promise<void> {
+  await issueCode(email, ip);
+}
+
+async function issueCode(email: string, ip: string): Promise<void> {
   const otp = crypto.randomInt(100000, 1000000).toString();
   const now = new Date();
 
