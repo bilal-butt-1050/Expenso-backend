@@ -1,4 +1,5 @@
 import { Prisma, TransactionKind } from "@prisma/client";
+import { assertNotBeforeJoin } from "../../lib/joinDate";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 import { dayKeyInZone, monthKeyInZone, startOfTomorrowInZone } from "../../utils/date";
@@ -49,8 +50,13 @@ export function loanAsOfMonth(
   const repaidBefore = settlements.filter((s) => s.month < month).reduce((t, s) => t.add(s.amount), money(0));
   const settledAmount = min(repaidBy, loan.amount);
   const remaining = clampPositive(subtract(loan.amount, repaidBy));
+  // Of what was still owed at the month's end, the part repaid in later months. A past month's
+  // figures stay as they were then (D-9); this lets the app say "since paid back" next to them.
+  const repaidAfter = settlements.filter((s) => s.month > month).reduce((t, s) => t.add(s.amount), money(0));
+  const repaidSince = min(repaidAfter, remaining);
   return {
     opened,
+    repaidSince,
     // Shown in `month` if open by its end and not already cleared before it began.
     visible: opened && subtract(loan.amount, repaidBefore).greaterThan(0),
     settledAmount,
@@ -130,11 +136,11 @@ export async function getLoansForMonth(userId: string, month: string, filters?: 
     prisma.loan.findMany({ where, orderBy: [{ date: "desc" }, { id: "desc" }] }),
     prisma.transaction.findMany({
       where: { userId, loanId: { not: null }, kind: { in: SETTLEMENT_KINDS } },
-      select: { loanId: true, amount: true, month: true },
+      select: { loanId: true, amount: true, month: true, date: true },
     }),
     userTimezone(prisma, userId),
   ]);
-  const byLoan = new Map<string, { amount: Prisma.Decimal; month: string }[]>();
+  const byLoan = new Map<string, { amount: Prisma.Decimal; month: string; date: Date }[]>();
   for (const s of settlements) {
     if (!s.loanId) continue;
     byLoan.set(s.loanId, [...(byLoan.get(s.loanId) ?? []), s]);
@@ -150,10 +156,26 @@ export async function getLoansForMonth(userId: string, month: string, filters?: 
           settledAmount: toNumber(asOf.settledAmount),
           remainingAmount: toNumber(asOf.remaining),
           status: asOf.status,
+          // After this month: how much of `remainingAmount` has been repaid since, and the day the
+          // loan was cleared if it has been (Bilal: a past month mustn't look stale).
+          repaidSince: toNumber(asOf.repaidSince),
+          settledOn: asOf.remaining.greaterThan(0) ? settledOnAfter(loan, byLoan.get(loan.id) ?? [], month) : null,
         },
       },
     ];
   });
+}
+
+/** The day a now-settled loan was cleared, when that happened after `month`; otherwise null. */
+function settledOnAfter(
+  loan: { status: string },
+  settlements: { month: string; date: Date }[],
+  month: string,
+): string | null {
+  if (loan.status !== "SETTLED") return null;
+  const last = settlements.reduce<Date | null>((latest, s) => (!latest || s.date > latest ? s.date : latest), null);
+  if (!last || !settlements.some((s) => s.month > month)) return null;
+  return last.toISOString();
 }
 
 export async function getLoansSummary(userId: string) {
@@ -216,6 +238,7 @@ export async function createLoan(userId: string, input: CreateLoanInput) {
   // When the money moved: now unless the user backdated it, never in the future (D-62, D-63).
   const date = input.date ?? new Date();
   assertNotFuture(date, timezone, "A loan's date");
+  await assertNotBeforeJoin(prisma, userId, date);
 
   const loan = await prisma.$transaction(async (tx) => {
     const created = await tx.loan.create({
@@ -290,6 +313,7 @@ export async function settleLoan(
     // calendar days, so a repayment the same day as the loan is fine whatever the hour. Checked
     // before anything is written.
     assertNotFuture(date, timezone, "A repayment's date");
+    await assertNotBeforeJoin(tx, userId, date);
     if (dayKeyInZone(date, timezone) < dayKeyInZone(loan.date, timezone)) {
       throw new AppError(400, "A repayment can't be dated before the loan");
     }
@@ -347,6 +371,7 @@ export async function updateLoan(userId: string, loanId: string, input: UpdateLo
     if (input.date !== undefined) {
       const timezone = await userTimezone(tx, userId);
       assertNotFuture(input.date, timezone, "A loan's date");
+      await assertNotBeforeJoin(tx, userId, input.date, loan.date);
       const firstRepayment = await tx.transaction.findFirst({
         where: { loanId, kind: { in: SETTLEMENT_KINDS } },
         orderBy: { date: "asc" },

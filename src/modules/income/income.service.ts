@@ -1,4 +1,5 @@
 import { Prisma, Transaction } from "@prisma/client";
+import { assertNotBeforeJoin } from "../../lib/joinDate";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 import { monthKeyInZone } from "../../utils/date";
@@ -66,6 +67,7 @@ export async function listIncome(
 }
 
 export async function createIncome(userId: string, input: IncomeInput) {
+  await assertNotBeforeJoin(prisma, userId, input.date);
   const created = await prisma.transaction.create({
     data: {
       userId,
@@ -88,7 +90,7 @@ export async function createIncome(userId: string, input: IncomeInput) {
 }
 
 export async function updateIncome(userId: string, id: string, input: Partial<IncomeInput>) {
-  await assertEarnOwnership(userId, id);
+  const existing = await assertEarnOwnership(userId, id);
 
   const data: Prisma.TransactionUpdateInput = {};
   if (input.amount !== undefined) data.amount = money(input.amount);
@@ -99,7 +101,7 @@ export async function updateIncome(userId: string, id: string, input: Partial<In
   if (input.paymentMethod !== undefined) data.paymentMethod = input.paymentMethod;
   if (input.date !== undefined) {
     data.date = input.date;
-    data.month = monthKeyInZone(input.date, await userTimezone(userId));
+    data.month = monthKeyInZone(input.date, await assertNotBeforeJoin(prisma, userId, input.date, existing.date));
   }
 
   const updated = await prisma.transaction.update({ where: { id }, data });

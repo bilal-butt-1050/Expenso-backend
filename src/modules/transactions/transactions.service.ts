@@ -1,4 +1,5 @@
 import { Prisma, TransactionKind } from "@prisma/client";
+import { assertNotBeforeJoin } from "../../lib/joinDate";
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utils/asyncHandler";
 import { invalidateUserDashboard } from "../../lib/cache";
@@ -101,16 +102,21 @@ export function serializeTransaction(t: TransactionRow) {
  * Cursors encode (date, id) rather than an offset. Dates are day-level, so ties are the norm and
  * `skip`/`take` over `ORDER BY date DESC` silently duplicated and dropped rows between pages.
  */
-function encodeCursor(date: Date, id: string): string {
-  return Buffer.from(`${date.toISOString()}|${id}`).toString("base64url");
+function encodeCursor(date: Date, createdAt: Date, id: string): string {
+  return Buffer.from(`${date.toISOString()}|${createdAt.toISOString()}|${id}`).toString("base64url");
 }
 
-function decodeCursor(cursor: string): { date: Date; id: string } {
+/** `createdAt` is null for a cursor issued before it was part of the order (date|id). */
+function decodeCursor(cursor: string): { date: Date; createdAt: Date | null; id: string } {
   try {
-    const [iso, id] = Buffer.from(cursor, "base64url").toString("utf8").split("|");
+    const parts = Buffer.from(cursor, "base64url").toString("utf8").split("|");
+    const [iso, createdIso, id] = parts.length === 2 ? [parts[0], null, parts[1]] : parts;
     const date = new Date(iso);
-    if (!id || Number.isNaN(date.getTime())) throw new Error("malformed");
-    return { date, id };
+    const createdAt = createdIso === null ? null : new Date(createdIso);
+    if (!id || Number.isNaN(date.getTime()) || (createdAt && Number.isNaN(createdAt.getTime()))) {
+      throw new Error("malformed");
+    }
+    return { date, createdAt, id };
   } catch {
     throw new AppError(400, "Invalid pagination cursor");
   }
@@ -127,15 +133,18 @@ export async function listTransactions(userId: string, filters: ListFilters) {
   if (filters.categoryId) where.categoryId = filters.categoryId;
 
   if (filters.cursor) {
-    const { date, id } = decodeCursor(filters.cursor);
-    // Strictly "after" the cursor in (date desc, id desc) order.
-    where.OR = [{ date: { lt: date } }, { date, id: { lt: id } }];
+    const { date, createdAt, id } = decodeCursor(filters.cursor);
+    // Strictly "after" the cursor in (date desc, createdAt desc, id desc) order.
+    where.OR = createdAt
+      ? [{ date: { lt: date } }, { date, createdAt: { lt: createdAt } }, { date, createdAt, id: { lt: id } }]
+      : [{ date: { lt: date } }, { date, id: { lt: id } }];
   }
 
+  // A picked day is saved at 12:00, so a day's entries share a date: the newest recorded comes first.
   const rows = await prisma.transaction.findMany({
     where,
     include: { category: true },
-    orderBy: [{ date: "desc" }, { id: "desc" }],
+    orderBy: [{ date: "desc" }, { createdAt: "desc" }, { id: "desc" }],
     take: limit + 1,
   });
 
@@ -146,7 +155,7 @@ export async function listTransactions(userId: string, filters: ListFilters) {
   return {
     items: items.map(serializeTransaction),
     hasMore,
-    nextCursor: hasMore && last ? encodeCursor(last.date, last.id) : null,
+    nextCursor: hasMore && last ? encodeCursor(last.date, last.createdAt, last.id) : null,
   };
 }
 
@@ -157,13 +166,6 @@ async function assertCategoryOwnership(userId: string, categoryId: string) {
   if (!category) throw new AppError(400, "Invalid category");
 }
 
-async function getUserTimezone(userId: string): Promise<string> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { timezone: true },
-  });
-  return user?.timezone ?? "Asia/Karachi";
-}
 
 export async function createTransaction(userId: string, input: CreateTransactionInput) {
   return (await createOrReplayTransaction(userId, input)).transaction;
@@ -194,7 +196,7 @@ export async function createOrReplayTransaction(
     throw new AppError(400, "A source is required for income");
   }
 
-  const timezone = await getUserTimezone(userId);
+  const timezone = await assertNotBeforeJoin(prisma, userId, input.date);
 
   let created;
   try {
@@ -273,7 +275,7 @@ export async function updateTransaction(
   if (input.paymentMethod !== undefined) data.paymentMethod = input.paymentMethod;
 
   if (input.date !== undefined) {
-    const timezone = await getUserTimezone(userId);
+    const timezone = await assertNotBeforeJoin(prisma, userId, input.date, existing.date);
     data.date = input.date;
     data.month = monthKeyInZone(input.date, timezone);
   }

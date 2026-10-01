@@ -16,6 +16,14 @@ export async function listCategories(userId: string) {
   });
 }
 
+/** "food" and "Food" are the same category to a person, though the unique index is case-sensitive. */
+async function assertNameFree(userId: string, name: string, exceptId?: string) {
+  const clash = await prisma.category.findFirst({
+    where: { userId, name: { equals: name.trim(), mode: "insensitive" }, ...(exceptId ? { id: { not: exceptId } } : {}) },
+  });
+  if (clash) throw new AppError(409, `You already have a category called "${clash.name}"`);
+}
+
 export async function createCategory(
   userId: string,
   data: { name: string; icon?: string; color?: string }
@@ -24,6 +32,7 @@ export async function createCategory(
   if (count >= 20) {
     throw new AppError(400, "Maximum of 20 categories allowed");
   }
+  await assertNameFree(userId, data.name);
 
   const result = await prisma.category.create({
     data: { userId, name: data.name, icon: data.icon, color: data.color, isDefault: false },
@@ -43,6 +52,7 @@ export async function updateCategory(
     throw new AppError(400, `The "${category.name}" category cannot be modified`);
   }
 
+  if (data.name !== undefined) await assertNameFree(userId, data.name, categoryId);
   const result = await prisma.category.update({ where: { id: categoryId }, data });
   invalidateUserDashboard(userId);
   return result;
