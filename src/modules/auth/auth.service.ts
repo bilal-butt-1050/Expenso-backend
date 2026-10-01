@@ -352,6 +352,22 @@ export async function changePassword(
   return { token: signToken({ userId, tv: tokenVersion + 1 }) };
 }
 
+/**
+ * Deletes the account and everything in it (Play Store requires in-app deletion). Every row the
+ * user owns cascades from `users`; a pending sign-up code for the address goes too. The send log
+ * stays: it's what enforces the send caps. Sessions end at once: the token check finds no user.
+ */
+export async function deleteAccount(userId: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { email: true } });
+    if (!user) throw new AppError(404, "User not found");
+    await tx.otpVerification.deleteMany({ where: { email: user.email } });
+    await tx.user.delete({ where: { id: userId } });
+  });
+  invalidateTokenVersionCache(userId);
+  invalidateUserDashboard(userId);
+}
+
 // Never leak the password hash back to a client.
 function toPublicUser(user: {
   id: string;

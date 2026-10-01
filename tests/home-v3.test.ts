@@ -195,6 +195,21 @@ describe("OPN: opening cash", () => {
 });
 
 // ------------------------------------------------------------------------------------ CAV
+describe("TOD: spent today", () => {
+  it("TOD-001: counts only today's spending, by the user's day, and only for the current month", async () => {
+    pinClock(SEP_15_0900_PKT);
+    const user = await makeUser();
+    await spend(user.id, 400, pkt("2026-09-14T23:30:00")); // yesterday, late
+    await spend(user.id, 250, pkt("2026-09-15T00:30:00")); // today, just after midnight
+    await spend(user.id, 1_000, pkt("2026-09-15T12:00:00")); // today (a picked day is saved at noon)
+    await spend(user.id, 90, pkt("2026-09-16T12:00:00")); // tomorrow
+    await earn(user.id, 5_000, pkt("2026-09-15T10:00:00")); // income isn't spending
+
+    expect((await getDashboardSummary(user.id, "2026-09")).spentToday).toBe(1_250);
+    expect((await getDashboardSummary(user.id, "2026-08")).spentToday).toBeNull();
+  });
+});
+
 describe("CAV: Cash available", () => {
   it("CAV-001: the current month counts everything up to the end of today, not later", async () => {
     pinClock(SEP_15_0900_PKT);
