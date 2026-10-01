@@ -67,6 +67,16 @@ async function passwordAccount(email: string) {
 const statusOf = (p: Promise<unknown>) => p.then(() => 200, (e) => e.statusCode as number);
 
 describe("Google sign-in", () => {
+  it("creates an account for a non-Google address, but doesn't mark it proved (D-66 review)", async () => {
+    // Google isn't authoritative for corp.example (no matching hd): a former owner of the address
+    // could have made this Google account, so the address stays unproved until an email code.
+    googleSays({ email: "someone@corp.example", sub: "g-corp" });
+    const { user } = await loginWithGoogle("token");
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(row.googleId).toBe("g-corp");
+    expect(row.emailVerifiedAt).toBeNull();
+  });
+
   it("creates a new account, marked verified", async () => {
     googleSays({ email: "fresh@gmail.com", sub: "g-fresh" });
 
@@ -115,7 +125,7 @@ describe("Google sign-in", () => {
     const err = await loginWithGoogle("token").catch((e) => e);
 
     expect(err.statusCode).toBe(409);
-    expect(err.message).toMatch(/Sign in with your password/);
+    expect(err.message).toMatch(/Sign in with your email/);
     const row = await prisma.user.findUniqueOrThrow({ where: { id: owner.id } });
     expect(row.googleId).toBeNull();
     expect(row.passwordHash).not.toBeNull();

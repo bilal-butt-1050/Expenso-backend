@@ -1,4 +1,6 @@
-import type { Prisma } from "@prisma/client";
+import crypto from "crypto";
+import jwt from "jsonwebtoken";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { hashPassword, comparePassword } from "../../utils/password";
 import { signToken } from "../../utils/jwt";
@@ -213,7 +215,10 @@ export async function loginWithGoogle(idToken: string) {
         googleId,
         name,
         avatarUrl: picture,
-        emailVerifiedAt: now,
+        // Only an address Google is authoritative for (Gmail, or a matching Workspace domain) is
+        // proved by it. Otherwise a former owner of the address could hold the account through
+        // Google after the real owner signs in with an email code (security review of D-66).
+        emailVerifiedAt: googleIsAuthoritative(email, hd) ? now : null,
         categories: { create: DEFAULT_CATEGORIES.map((c) => ({ ...c, isDefault: true })) },
       },
     });
@@ -224,7 +229,7 @@ export async function loginWithGoogle(idToken: string) {
     throw new AppError(409, "This email is linked to a different Google account.");
   }
   if (!googleIsAuthoritative(email, hd)) {
-    throw new AppError(409, "An account with this email already exists. Sign in with your password.");
+    throw new AppError(409, "An account with this email already exists. Sign in with your email.");
   }
 
   const reclaim = !byEmail.emailVerifiedAt && Boolean(byEmail.passwordHash);
@@ -368,6 +373,89 @@ export async function deleteAccount(userId: string): Promise<void> {
   });
   invalidateTokenVersionCache(userId);
   invalidateUserDashboard(userId);
+}
+
+/**
+ * Passwordless email (D-66), step 2: the code proves the person owns the address.
+ *
+ * An existing account signs straight in. One that never proved its address may carry a password
+ * someone else set (D-19/D-40); the code proves ownership now, so that password goes, and with it
+ * every other session. A new address gets a short-lived ticket instead of an account: the account
+ * is made in step 3, once there's a name, and the code isn't asked for twice.
+ */
+export async function verifyEmailCode(email: string, code: string) {
+  await consumeOtp(email, code);
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    return { status: "new" as const, signupTicket: signSignupTicket(email) };
+  }
+
+  if (!user.emailVerifiedAt) {
+    // The account never proved its address, so whatever else gets into it (a password, a Google
+    // link) may be someone else's. The code proves it now: all of that goes, and every other
+    // session ends. Unconditionally, so nothing set since the read above survives (security review).
+    // Conditional on it still being unproved, so two sign-ins at once take it back once.
+    const proved = await prisma.user.updateMany({
+      where: { id: user.id, emailVerifiedAt: null },
+      data: { emailVerifiedAt: new Date(), passwordHash: null, googleId: null, tokenVersion: { increment: 1 } },
+    });
+    if (proved.count === 1) invalidateTokenVersionCache(user.id);
+  }
+  const current = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+  return {
+    status: "signedIn" as const,
+    token: signToken({ userId: current.id, tv: current.tokenVersion }),
+    user: toPublicUser(current),
+  };
+}
+
+/** Passwordless email, step 3: a new account for the address the ticket proved. */
+export async function completeEmailSignUp(signupTicket: string, name: string) {
+  const email = readSignupTicket(signupTicket);
+  try {
+    const user = await prisma.user.create({
+      data: {
+        email,
+        name,
+        emailVerifiedAt: new Date(),
+        categories: { create: DEFAULT_CATEGORIES.map((c) => ({ ...c, isDefault: true })) },
+      },
+    });
+    return { token: signToken({ userId: user.id, tv: user.tokenVersion }), user: toPublicUser(user) };
+  } catch (error) {
+    // The address got an account since the code was checked (a second tap, or Google): sign in.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new AppError(409, "An account with this email already exists. Sign in with your email.");
+    }
+    throw error;
+  }
+}
+
+/**
+ * The ticket is a JWT with its own key, derived from JWT_SECRET for this one purpose: a session
+ * token isn't a ticket, and a ticket isn't a session (each fails the other's signature check).
+ */
+const SIGNUP_TICKET_TTL = "15m";
+function signupTicketKey(): Buffer {
+  return Buffer.from(crypto.hkdfSync("sha256", env.jwtSecret, "", "expenso-signup-ticket-v1", 32));
+}
+
+function signSignupTicket(email: string): string {
+  return jwt.sign({ purpose: "signup", email }, signupTicketKey(), { expiresIn: SIGNUP_TICKET_TTL });
+}
+
+function readSignupTicket(ticket: string): string {
+  try {
+    const decoded = jwt.verify(ticket, signupTicketKey(), { algorithms: ["HS256"] }) as {
+      purpose?: unknown;
+      email?: unknown;
+    };
+    if (decoded.purpose === "signup" && typeof decoded.email === "string") return decoded.email;
+  } catch {
+    // Expired, tampered or not a ticket: all the same to the person.
+  }
+  throw new AppError(400, "That sign-up took too long. Start again with your email.");
 }
 
 // Never leak the password hash back to a client.

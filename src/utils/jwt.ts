@@ -17,7 +17,7 @@ export function signToken(payload: JwtPayload): string {
 }
 
 export function verifyToken(token: string): JwtPayload {
-  const decoded = jwt.verify(token, env.jwtSecret) as Partial<JwtPayload>;
+  const decoded = jwt.verify(token, env.jwtSecret, { algorithms: ["HS256"] }) as Partial<JwtPayload>;
   if (!decoded?.userId) {
     throw new Error("Malformed token payload");
   }

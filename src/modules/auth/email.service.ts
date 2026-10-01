@@ -27,12 +27,13 @@ function otpEmailHtml(otp: string): string {
         Welcome to <span style="color: #818CF8;">Expenso</span>
       </h2>
       <p style="color: #9CA3AF; font-size: 15px; line-height: 1.5; margin-bottom: 28px; text-align: center;">
-        Your verification code is below. Enter it in the app to finish creating your account.
+        Your code is below. Enter it in the app to sign in, or to finish creating your account.
       </p>
       <div style="background-color: #111827; border: 1px solid #374151; border-radius: 14px; padding: 20px; text-align: center; margin-bottom: 28px;">
         <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #818CF8;">${code}</span>
       </div>
       <p style="color: #9CA3AF; font-size: 13px; text-align: center;">
+        Never share this code. Expenso will never ask you for it.<br />
         This code expires in 10 minutes. If you didn't request it, you can ignore this email.
       </p>
     </div>
@@ -83,7 +84,7 @@ export async function sendOtpEmail(email: string, otp: string): Promise<void> {
       body: JSON.stringify({
         sender: { name: env.mailFromName, email: fromEmail },
         to: [{ email }],
-        subject: "Your Expenso verification code",
+        subject: "Your Expenso sign-in code",
         htmlContent: otpEmailHtml(otp),
       }),
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
