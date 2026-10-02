@@ -8,6 +8,7 @@ import { requireAuth } from "../../middleware/auth";
 import {
   createLoan,
   deleteLoan,
+  deleteLoanPayment,
   getLoans,
   getLoansForMonth,
   getLoansSummary,
@@ -35,6 +36,8 @@ const settleLoanSchema = z.object({
   paymentAmount: amountSchema("Payment amount must be greater than 0").optional(),
   /** When the payment actually happened. Defaults to now. */
   date: movementDateSchema.optional(),
+  /** False = settled without money (forgiven, paid in kind). Defaults to true. */
+  movesCash: z.boolean().optional(),
 });
 
 const updateLoanSchema = z.object({
@@ -43,6 +46,8 @@ const updateLoanSchema = z.object({
   dueDate: z.string().datetime().optional().nullable(),
   notes: z.string().trim().max(500).optional().nullable(),
   date: movementDateSchema.optional(),
+  /** Whether the money went through the user's cash when the loan started. */
+  recordCashflow: z.boolean().optional(),
 });
 
 /** Validated, so a bad filter is a 400 rather than a Prisma error (it used to be a 500). */
@@ -86,7 +91,7 @@ loansRouter.patch(
   "/:id/settle",
   asyncHandler(async (req, res) => {
     const body = settleLoanSchema.parse(req.body);
-    const updated = await settleLoan(req.userId!, req.params.id, body.paymentAmount, body.date);
+    const updated = await settleLoan(req.userId!, req.params.id, body.paymentAmount, body.date, body.movesCash);
     res.json(updated);
   })
 );
@@ -97,6 +102,14 @@ loansRouter.patch(
     const body = updateLoanSchema.parse(req.body);
     const updated = await updateLoan(req.userId!, req.params.id, body);
     res.json(updated);
+  })
+);
+
+/** Undoes one repayment. */
+loansRouter.delete(
+  "/:id/payments/:paymentId",
+  asyncHandler(async (req, res) => {
+    res.json(await deleteLoanPayment(req.userId!, req.params.id, req.params.paymentId));
   })
 );
 

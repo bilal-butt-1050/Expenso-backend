@@ -1,10 +1,10 @@
 import { inSerializableTransaction } from "../../lib/serializable";
 import { invalidateUserDashboard } from "../../lib/cache";
 import { AppError } from "../../utils/asyncHandler";
-import { DEFAULT_TIMEZONE, monthKeyInZone, startOfTomorrowInZone } from "../../utils/date";
+import { DEFAULT_TIMEZONE } from "../../utils/date";
 import { money, round2, toNumber } from "../../utils/money";
 import { MAX_AMOUNT } from "../../utils/validation";
-import { CASH_SIGN } from "../transactions/transactions.service";
+import { ledgerCashToday } from "../transactions/transactions.service";
 
 /**
  * Sets the user's opening cash from what they hold today (R-34, D-63).
@@ -28,19 +28,7 @@ export async function setOpeningBalanceFromToday(userId: string, cashToday: numb
     // Exactly the dashboard's rule for the current month's Cash available: every earlier month, plus
     // this month's rows dated before the start of tomorrow. Using the same rule means the figure
     // lands on the target by construction, even if month keys were filed under an older timezone.
-    const timezone = user.timezone ?? DEFAULT_TIMEZONE;
-    const now = new Date();
-    const currentMonth = monthKeyInZone(now, timezone);
-    const cutoff = startOfTomorrowInZone(now, timezone);
-    const byKind = await tx.transaction.groupBy({
-      by: ["kind"],
-      where: { userId, OR: [{ month: { lt: currentMonth } }, { month: currentMonth, date: { lt: cutoff } }] },
-      _sum: { amount: true },
-    });
-    const ledgerCash = byKind.reduce(
-      (total, row) => total.add((row._sum.amount ?? money(0)).mul(CASH_SIGN[row.kind])),
-      money(0)
-    );
+    const ledgerCash = await ledgerCashToday(tx, userId, user.timezone ?? DEFAULT_TIMEZONE);
 
     // Rounded to paisa before it's checked and stored, so the response is what was saved.
     const opening = round2(money(cashToday).sub(ledgerCash));

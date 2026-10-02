@@ -132,6 +132,7 @@ const MUTATIONS_BY_ID = [
   "PATCH /loans/:id",
   "PATCH /loans/:id/settle",
   "DELETE /loans/:id",
+  "DELETE /loans/:id/payments/:paymentId",
   "PATCH /transactions/:id",
   "DELETE /transactions/:id",
 ];
@@ -152,10 +153,12 @@ const SELF_OR_PUBLIC = [
   "POST /auth/email/complete",
   // Sets the caller's own opening cash: there's no id to point at someone else's.
   "PUT /opening-balance/",
+  // Corrects the caller's own balance: no id at all.
+  "POST /transactions/adjust-balance",
 ];
 
 describe("route coverage", () => {
-  it("every mounted route is classified for the ownership tests (40 endpoints)", () => {
+  it("every mounted route is classified for the ownership tests (42 endpoints)", () => {
     const mounted: [string, Router][] = [
       ["/auth", authRouter], ["/budgets", budgetsRouter], ["/categories", categoriesRouter],
       ["/dashboard", dashboardRouter], ["/expenses", expensesRouter], ["/income", incomeRouter],
@@ -172,7 +175,7 @@ describe("route coverage", () => {
     const classified = [...READS, ...MUTATIONS_BY_ID, ...CREATES, ...SELF_OR_PUBLIC];
 
     expect(actual.sort()).toEqual(classified.sort());
-    expect(actual).toHaveLength(40);
+    expect(actual).toHaveLength(42);
   });
 });
 
@@ -248,6 +251,7 @@ describe("OWN-002: A cannot modify B's rows", () => {
     ["PATCH /loans/:id", "PATCH", `/loans/${w.b.loan.id}`, { personName: "hacked" }],
     ["PATCH /loans/:id/settle", "PATCH", `/loans/${w.b.loan.id}/settle`, {}],
     ["DELETE /loans/:id", "DELETE", `/loans/${w.b.loan.id}`],
+    ["DELETE /loans/:id/payments/:paymentId", "DELETE", `/loans/${w.b.loan.id}/payments/${w.b.spend.id}`],
     ["PATCH /transactions/:id", "PATCH", `/transactions/${w.b.spend.id}`, { amount: 1 }],
     ["DELETE /transactions/:id", "DELETE", `/transactions/${w.b.spend.id}`],
   ];
