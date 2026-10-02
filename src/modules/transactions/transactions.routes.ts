@@ -1,11 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
-import { amountSchema } from "../../utils/validation";
+import { amountSchema, nonNegativeAmountSchema } from "../../utils/validation";
 import { TransactionKind } from "@prisma/client";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAuth } from "../../middleware/auth";
 import { isValidMonthKey } from "../../utils/date";
 import {
+  adjustBalance,
   createOrReplayTransaction,
   deleteTransaction,
   listTransactions,
@@ -22,7 +23,10 @@ const KINDS = [
   "COLLECT",
   "BORROW_IN",
   "REPAY",
+  "ADJUST",
 ] as const satisfies readonly TransactionKind[];
+
+const personNameSchema = z.string().trim().min(1, "Who was it?").max(80, "Name is too long");
 
 export const createSchema = z.object({
   /**
@@ -46,6 +50,16 @@ export const createSchema = z.object({
   source: z.string().max(50).optional(),
   sourceIcon: z.string().max(50).optional(),
   sourceColor: z.string().max(20).optional(),
+  // SPEND involving someone else. `amount` is always the user's own share.
+  /** They paid it: the user owes them `amount`, and no cash moved. */
+  paidBy: z.object({ personName: personNameSchema }).nullable().optional(),
+  /** The user paid it all; `share` is theirs, so they owe the user that much. */
+  split: z.object({ personName: personNameSchema, share: amountSchema("Their share must be greater than 0") }).nullable().optional(),
+});
+
+const adjustSchema = z.object({
+  /** What the user actually has now. The difference from the ledger is recorded. */
+  actualCash: nonNegativeAmountSchema,
 });
 
 // An id is fixed at creation; PATCH can never change it.
@@ -79,6 +93,15 @@ transactionsRouter.post(
     const { transaction, replayed } = await createOrReplayTransaction(req.userId!, body);
     // 200 for a replay of a row that already exists, 201 when this request created it.
     res.status(replayed ? 200 : 201).json(transaction);
+  })
+);
+
+/** Correct the balance to what the user actually has (an ADJUST row). */
+transactionsRouter.post(
+  "/adjust-balance",
+  asyncHandler(async (req, res) => {
+    const { actualCash } = adjustSchema.parse(req.body);
+    res.status(201).json(await adjustBalance(req.userId!, actualCash));
   })
 );
 

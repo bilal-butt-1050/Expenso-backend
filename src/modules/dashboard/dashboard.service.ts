@@ -21,6 +21,7 @@ type Row = {
   categoryId: string | null;
   needWant: string | null;
   date: Date;
+  movesCash: boolean;
 };
 
 const sum = (rows: { amount: Prisma.Decimal }[]) =>
@@ -34,8 +35,9 @@ const ofKind = (rows: Row[], ...kinds: TransactionKind[]) =>
  *
  * Reads the unified ledger, which is what makes the headline numbers honest:
  * - spending and budgets count SPEND only, so lending money no longer blows a budget;
- * - cash on hand sums every kind, plus the user's opening balance, so lending and collecting nets to
- *   zero and the figure can match real money (D-62);
+ * - cash on hand sums every row that moved cash, plus the user's opening balance, so lending and
+ *   collecting nets to zero and the figure can match real money (D-62). An expense someone else
+ *   paid is spending without cash; an old debt is a debt without cash;
  * - net worth folds in what is still owed in each direction.
  */
 export async function getDashboardSummary(userId: string, month: string): Promise<DashboardSummary> {
@@ -84,23 +86,23 @@ async function buildDashboardSummary(userId: string, month: string) {
     await Promise.all([
       prisma.transaction.findMany({
         where: { userId, month },
-        select: { kind: true, amount: true, categoryId: true, needWant: true, date: true },
+        select: { kind: true, amount: true, categoryId: true, needWant: true, date: true, movesCash: true },
       }),
       prisma.transaction.findMany({
         where: { userId, month: prevMonth, kind: "SPEND" },
-        select: { kind: true, amount: true, categoryId: true, needWant: true, date: true },
+        select: { kind: true, amount: true, categoryId: true, needWant: true, date: true, movesCash: true },
       }),
       // Everything up to and including the selected month — the closing position.
       prisma.transaction.groupBy({
         by: ["kind"],
-        where: { userId, month: { lte: month } },
+        where: { userId, month: { lte: month }, movesCash: true },
         _sum: { amount: true },
       }),
       // Everything up to the *previous* month — the opening position. Having both is what makes
       // month-over-month continuity expressible, and checkable.
       prisma.transaction.groupBy({
         by: ["kind"],
-        where: { userId, month: { lt: month } },
+        where: { userId, month: { lt: month }, movesCash: true },
         _sum: { amount: true },
       }),
       prisma.budget.findMany({ where: { userId, month }, include: { category: true } }),
@@ -118,8 +120,9 @@ async function buildDashboardSummary(userId: string, month: string) {
   const monthlyIncome = sum(ofKind(monthRows, "EARN"));
   const totalExpenses = sum(ofKind(monthRows, "SPEND"));
 
-  // Every kind moves cash, not just spending and earning.
-  const netCashThisMonth = monthRows.reduce(
+  // Every kind moves cash, not just spending and earning, but only rows that actually moved it.
+  const cashRows = monthRows.filter((r) => r.movesCash);
+  const netCashThisMonth = cashRows.reduce(
     (total, r) => total.add(r.amount.mul(CASH_SIGN[r.kind])),
     money(0)
   );
@@ -139,8 +142,8 @@ async function buildDashboardSummary(userId: string, month: string) {
    *
    * A loan counts once it was opened on or before the period, and its outstanding balance is the
    * principal less the settlements recorded by then. Deriving it this way also handles a loan
-   * created with `recordCashflow: false`: it has no opening cash movement but is still a real
-   * obligation.
+   * whose money didn't move through cash (an old debt, an expense someone else paid): it's still a
+   * real obligation, and a settlement without money still reduces it.
    */
   const settlementsByLoan = new Map<string, { amount: Prisma.Decimal; month: string }[]>();
   for (const s of settlementRows) {
@@ -313,7 +316,7 @@ async function buildDashboardSummary(userId: string, month: string) {
 
   // Cash available: this month's story (D-63). The cash at the start of the month, plus the month's
   // movements (for the current month, only those up to today), is the figure.
-  const storyRows = period === "current" ? monthRows.filter((r) => r.date < endOfToday) : monthRows;
+  const storyRows = period === "current" ? cashRows.filter((r) => r.date < endOfToday) : cashRows;
   const story = {
     startOfMonth: openingCash,
     income: sum(ofKind(storyRows, "EARN")),
@@ -322,6 +325,8 @@ async function buildDashboardSummary(userId: string, month: string) {
     borrowed: sum(ofKind(storyRows, "BORROW_IN")),
     collected: sum(ofKind(storyRows, "COLLECT")),
     repaid: sum(ofKind(storyRows, "REPAY")),
+    // Signed: a correction can add money or take it away.
+    adjusted: sum(ofKind(storyRows, "ADJUST")),
   };
   const cashAvailableAmount = story.startOfMonth
     .add(story.income)
@@ -329,7 +334,8 @@ async function buildDashboardSummary(userId: string, month: string) {
     .add(story.collected)
     .sub(story.expenses)
     .sub(story.lent)
-    .sub(story.repaid);
+    .sub(story.repaid)
+    .add(story.adjusted);
 
   // Spent today (current month only): what went out since the start of the user's day.
   let spentToday: Prisma.Decimal | null = null;
@@ -395,6 +401,7 @@ async function buildDashboardSummary(userId: string, month: string) {
         borrowed: toNumber(story.borrowed),
         collected: toNumber(story.collected),
         repaid: toNumber(story.repaid),
+        adjusted: toNumber(story.adjusted),
       },
     },
     comparison,

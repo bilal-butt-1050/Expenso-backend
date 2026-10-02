@@ -113,7 +113,7 @@ async function randomHistory(opts: {
     }],
     [15, async () => {
       if (!loans.length) return;
-      // Sometimes more than what's left, which must clamp; sometimes a loan that's already settled.
+      // Sometimes more than what's left, which is refused; sometimes a loan that's already settled.
       // Dated between the loan's date and now, as the rules require.
       const loan = r.pick(loans);
       const when = new Date(loan.date.getTime() + r.next() * (Date.now() - loan.date.getTime()));
@@ -168,7 +168,8 @@ async function openingFrom(userId: string) {
 async function positionFromRows(userId: string, month: string) {
   const opening = await openingFrom(userId);
   const [rows, loans, settlements] = await Promise.all([
-    prisma.transaction.findMany({ where: { userId, month: { lte: month } }, select: { kind: true, amount: true } }),
+    // Only rows that moved cash: an old debt's starting row doesn't.
+    prisma.transaction.findMany({ where: { userId, month: { lte: month }, movesCash: true }, select: { kind: true, amount: true } }),
     prisma.loan.findMany({ where: { userId } }),
     prisma.transaction.findMany({
       where: { userId, month: { lte: month }, kind: { in: ["COLLECT", "REPAY"] } },

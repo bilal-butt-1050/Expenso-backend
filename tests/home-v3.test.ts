@@ -254,7 +254,7 @@ describe("CAV: Cash available", () => {
 
     const d = await getDashboardSummary(user.id, "2026-09");
     const b = d.cashAvailable.breakdown;
-    expect(b).toEqual({ startOfMonth: 40_000, income: 55_000, expenses: 18_400, lent: 5_000, borrowed: 2_000, collected: 1_000, repaid: 500 });
+    expect(b).toEqual({ startOfMonth: 40_000, income: 55_000, expenses: 18_400, lent: 5_000, borrowed: 2_000, collected: 1_000, repaid: 500, adjusted: 0 });
     expect(b.startOfMonth).toBe(d.openingCash);
     expect(b.startOfMonth + b.income + b.borrowed + b.collected - b.expenses - b.lent - b.repaid).toBe(d.cashAvailable.amount);
     expect(d.cashAvailable.amount).toBe(before.cashAvailable.amount - 5_000 + 1_000 + 2_000 - 500);
@@ -483,7 +483,9 @@ describe("LTL: dated loans and the month timeline", () => {
     const aug = await getDashboardSummary(user.id, "2026-08");
     expect(aug.closingCash).toBe(augBefore.closingCash);
     expect(aug.netDebtSnapshot.totalBorrowed).toBe(3_000);
-    expect(await prisma.transaction.count({ where: { loanId: loan.id } })).toBe(0);
+    // Its starting row moved with it, and still moves no cash.
+    const rows = await prisma.transaction.findMany({ where: { loanId: loan.id } });
+    expect(rows.map((r) => [r.month, r.movesCash])).toEqual([["2026-07", false]]);
   });
 
   it("LTL-011: the month view's totals equal the dashboard's debt position, month by month", async () => {

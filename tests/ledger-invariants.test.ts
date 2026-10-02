@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../src/lib/prisma";
+import { AppError } from "../src/utils/asyncHandler";
 import { getDashboardSummary } from "../src/modules/dashboard/dashboard.service";
 import { createLoan, settleLoan, updateLoan, deleteLoan } from "../src/modules/loans/loans.service";
 import {
@@ -21,7 +22,7 @@ import { makeUser, categoryFor, earn, dateOf, currentMonth } from "./helpers/fac
 /** Cash derived straight from the rows, independent of the dashboard's own arithmetic. */
 async function cashFromLedger(userId: string): Promise<number> {
   const rows = await prisma.transaction.findMany({
-    where: { userId },
+    where: { userId, movesCash: true },
     select: { kind: true, amount: true },
   });
   return rows
@@ -150,20 +151,21 @@ describe("LEDGER — money invariants", () => {
     expect(await prisma.transaction.count({ where: { loanId: loan.id, kind: "COLLECT" } })).toBe(0);
   });
 
-  it("LED-014: settling more than what's left clamps to what's left", async () => {
+  it("LED-014: settling more than what's left is refused and writes nothing", async () => {
     const user = await makeUser();
     const loan = await createLoan(user.id, { type: "LENT", personName: "E", amount: 100 });
     await settleLoan(user.id, loan.id, 30);
 
-    await settleLoan(user.id, loan.id, 500);
+    // Capping it used to record less than the user entered, without a word (2026-10-02).
+    const err = await settleLoan(user.id, loan.id, 500).catch((e) => e);
+    expect(err).toBeInstanceOf(AppError);
+    expect(err.statusCode).toBe(400);
+    expect(err.message).toMatch(/Only 70 is left/);
 
     const fresh = await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } });
-    expect(fresh.settledAmount.toNumber()).toBe(100);
-    expect(fresh.status).toBe("SETTLED");
-    const collected = (await prisma.transaction.findMany({ where: { loanId: loan.id, kind: "COLLECT" } }))
-      .map((t) => t.amount.toNumber())
-      .sort((a, b) => a - b);
-    expect(collected, "the second movement is the clamped amount, not the requested one").toEqual([30, 70]);
+    expect(fresh.settledAmount.toNumber()).toBe(30);
+    expect(fresh.status).toBe("PARTIAL");
+    expect(await prisma.transaction.count({ where: { loanId: loan.id, kind: "COLLECT" } })).toBe(1);
   });
 
   it("LED-015: settling an already settled loan is a 400 and writes nothing", async () => {
@@ -379,13 +381,15 @@ describe("LEDGER — loans move cash, not net worth", () => {
     expect(d.netDebtSnapshot.totalBorrowed).toBe(outstanding("BORROWED"));
   });
 
-  it("LED-018: recordCashflow false writes the loan but no opening movement", async () => {
+  it("LED-018: recordCashflow false writes the loan and a starting movement that moves no cash", async () => {
     const user = await makeUser();
 
     const loan = await createLoan(user.id, { type: "BORROWED", personName: "Old debt", amount: 3_000, recordCashflow: false });
 
     expect(await prisma.loan.count({ where: { id: loan.id } })).toBe(1);
-    expect(await prisma.transaction.count({ where: { loanId: loan.id } })).toBe(0);
+    const rows = await prisma.transaction.findMany({ where: { loanId: loan.id } });
+    expect(rows.map((r) => [r.kind, r.movesCash])).toEqual([["BORROW_IN", false]]);
+    expect(loan.cashMoved).toBe(false);
     expect(await cashFromLedger(user.id)).toBe(0);
   });
 

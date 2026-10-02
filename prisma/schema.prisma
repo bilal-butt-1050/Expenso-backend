@@ -212,6 +212,9 @@ enum TransactionKind {
   COLLECT
   BORROW_IN
   REPAY
+  /// A balance correction (Bilal, 2026-10-02): the user's real money differs from the ledger. Its
+  /// amount is signed (+ found money, − missing money). Neither income nor spending.
+  ADJUST
 }
 
 model Transaction {
@@ -229,6 +232,11 @@ model Transaction {
   description   String?
   paymentMethod String  @default("Cash")
 
+  /// Whether the user's cash changed. False for an old debt recorded after the fact, an expense
+  /// someone else paid, or a loan settled without money. Cash sums only true rows; spending,
+  /// income and debts read every row.
+  movesCash Boolean @default(true)
+
   // SPEND only.
   categoryId String?
   category   Category? @relation(fields: [categoryId], references: [id])
@@ -239,7 +247,8 @@ model Transaction {
   sourceIcon  String?
   sourceColor String?
 
-  // Set for LEND_OUT / COLLECT / BORROW_IN / REPAY. Cascades so deleting a loan removes its
+  // Set for LEND_OUT / COLLECT / BORROW_IN / REPAY, and for a SPEND that someone else paid or that
+  // was split (the loan it created). Cascades so deleting a loan removes its
   // movements, rather than leaving orphaned cashflow behind as the old auto-created rows did.
   loanId String?
   loan   Loan?   @relation(fields: [loanId], references: [id], onDelete: Cascade)
