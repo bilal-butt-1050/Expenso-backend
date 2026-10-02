@@ -48,7 +48,10 @@ const LOAN_INCLUDE = {
       month: true,
       movesCash: true,
       description: true,
-      category: { select: { id: true, name: true, icon: true, color: true } },
+      paymentMethod: true,
+      needWant: true,
+      categoryId: true,
+      category: { select: { id: true, name: true, icon: true, color: true, isDefault: true } },
     },
     orderBy: [{ date: "asc" }, { createdAt: "asc" }],
   },
@@ -125,9 +128,15 @@ function serializeLoan(loan: LoanWithMovements) {
       ? {
           id: expense.id,
           description: expense.description,
+          categoryId: expense.categoryId,
           category: expense.category,
           /** The user's own share: what counts as spending. */
           amount: toNumber(expense.amount),
+          date: expense.date.toISOString(),
+          month: expense.month,
+          paymentMethod: expense.paymentMethod,
+          needWant: expense.needWant,
+          movesCash: expense.movesCash,
         }
       : null,
     /** Repayments, oldest first. `movesCash` false = settled without money (forgiven, in kind). */
