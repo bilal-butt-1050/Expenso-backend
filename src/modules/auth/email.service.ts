@@ -1,7 +1,9 @@
 import { env } from "../../config/env";
 import { AppError } from "../../utils/asyncHandler";
 
+const RESEND_SEND_URL = "https://api.resend.com/emails";
 const BREVO_SEND_URL = "https://api.brevo.com/v3/smtp/email";
+const SUBJECT = "Your Expenso sign-in code";
 const SEND_TIMEOUT_MS = 10_000;
 
 /**
@@ -40,58 +42,74 @@ function otpEmailHtml(otp: string): string {
   `;
 }
 
-/**
- * Brevo's answer, mapped to what the client may see (ARCH N1, EML-002). The client gets a plain
- * message only. The server logs one line with Brevo's status and code, never the key, the
- * recipient or the code.
- */
-function mapBrevoFailure(status: number | null, code: string, message: string): AppError {
-  // Brevo's message isn't known to echo the recipient, but never risk logging an address.
-  const safe = message.replace(/\S+@\S+/g, "<email>").slice(0, 200);
-  console.error(`[email] brevo ${status ?? "network"} ${code}: ${safe}`);
+type Provider = "resend" | "brevo";
 
-  // Bad key, an IP Brevo hasn't authorised, or the account isn't allowed to send yet.
+/**
+ * The provider's answer, mapped to what the client may see (ARCH N1, EML-002). The client gets a
+ * plain message only. The server logs one line with the provider, its status and error code, never
+ * the key, the recipient or the code.
+ */
+function mapSendFailure(provider: Provider, status: number | null, code: string, message: string): AppError {
+  // Neither provider is known to echo the recipient, but never risk logging an address.
+  const safe = message.replace(/\S+@\S+/g, "<email>").slice(0, 200);
+  console.error(`[email] ${provider} ${status ?? "network"} ${code}: ${safe}`);
+
+  // A bad key, an IP the provider hasn't authorised, or an unverified sender domain.
   if (status === 401 || status === 403) {
     return new AppError(503, "Email is temporarily unavailable. Please try again later.");
   }
-  // Out of credits, or Brevo is rate-limiting us.
+  // Out of credits or daily quota, or the provider is rate-limiting us.
   if (status === 402 || status === 429) {
     return new AppError(503, "We can't send codes right now. Please try again later.");
   }
-  // Our request was invalid, Brevo failed, the network failed, or it timed out.
+  // Our request was invalid, the provider failed, the network failed, or it timed out.
   return new AppError(502, "Could not send the verification email. Please try again.");
 }
 
+/** The HTTP request each provider expects for one email. */
+function requestFor(provider: Provider, apiKey: string, fromEmail: string, to: string, html: string) {
+  const json = { "content-type": "application/json", accept: "application/json" };
+  return provider === "resend"
+    ? {
+        url: RESEND_SEND_URL,
+        headers: { ...json, authorization: `Bearer ${apiKey}` },
+        body: { from: `${env.mailFromName} <${fromEmail}>`, to: [to], subject: SUBJECT, html },
+      }
+    : {
+        url: BREVO_SEND_URL,
+        headers: { ...json, "api-key": apiKey },
+        body: { sender: { name: env.mailFromName, email: fromEmail }, to: [{ email: to }], subject: SUBJECT, htmlContent: html },
+      };
+}
+
 export async function sendOtpEmail(email: string, otp: string): Promise<void> {
-  // Read at call time, not at import, so configuration changes and tests take effect.
-  const apiKey = env.brevoApiKey;
+  // Read at call time, not at import, so configuration changes and tests take effect. Resend wins
+  // when both are set; Brevo stays as the fallback until the Resend key is in place.
+  const provider: Provider | null = env.resendApiKey ? "resend" : env.brevoApiKey ? "brevo" : null;
+  const apiKey = provider === "resend" ? env.resendApiKey : env.brevoApiKey;
   const fromEmail = env.mailFromEmail;
 
-  if (!apiKey || !fromEmail) {
+  if (!provider || !apiKey || !fromEmail) {
     if (mayLogCode()) {
-      console.warn(`[email] Brevo not configured (${process.env.NODE_ENV}). OTP for ${email}: ${otp}`);
+      console.warn(`[email] No email provider configured (${process.env.NODE_ENV}). OTP for ${email}: ${otp}`);
       return;
     }
-    console.error("[email] BREVO_API_KEY or MAIL_FROM_EMAIL is not set; OTP email is unavailable");
+    console.error("[email] No email provider (RESEND_API_KEY or BREVO_API_KEY) or MAIL_FROM_EMAIL; OTP email is unavailable");
     throw new AppError(503, "Email verification is unavailable right now. Please try again later.");
   }
 
+  const request = requestFor(provider, apiKey, fromEmail, email, otpEmailHtml(otp));
   let response: Response;
   try {
-    response = await fetch(BREVO_SEND_URL, {
+    response = await fetch(request.url, {
       method: "POST",
-      headers: { "api-key": apiKey, "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({
-        sender: { name: env.mailFromName, email: fromEmail },
-        to: [{ email }],
-        subject: "Your Expenso sign-in code",
-        htmlContent: otpEmailHtml(otp),
-      }),
+      headers: request.headers,
+      body: JSON.stringify(request.body),
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
   } catch (error) {
     const reason = error instanceof Error ? error.name : "unknown";
-    throw mapBrevoFailure(null, reason, "request failed");
+    throw mapSendFailure(provider, null, reason, "request failed");
   }
 
   if (response.ok) return;
@@ -99,11 +117,12 @@ export async function sendOtpEmail(email: string, otp: string): Promise<void> {
   let code = "";
   let message = "";
   try {
-    const body = (await response.json()) as { code?: string; message?: string };
-    code = body.code ?? "";
+    // Brevo answers {code, message}; Resend answers {statusCode, name, message}.
+    const body = (await response.json()) as { code?: string; name?: string; message?: string };
+    code = body.code ?? body.name ?? "";
     message = body.message ?? "";
   } catch {
     // Not JSON; the status alone decides the mapping.
   }
-  throw mapBrevoFailure(response.status, code, message);
+  throw mapSendFailure(provider, response.status, code, message);
 }

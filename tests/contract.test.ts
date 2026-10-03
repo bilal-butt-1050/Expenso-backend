@@ -254,6 +254,7 @@ function googleSays(email: string, sub: string) {
 describe("CON-001: every endpoint the app calls returns the shape the app reads", () => {
   const saved = {
     brevoApiKey: env.brevoApiKey,
+    resendApiKey: env.resendApiKey,
     mailFromEmail: env.mailFromEmail,
     googleClientIdWeb: env.googleClientIdWeb,
     requireEmailVerification: env.requireEmailVerification,
@@ -262,6 +263,7 @@ describe("CON-001: every endpoint the app calls returns the shape the app reads"
 
   beforeEach(() => {
     env.brevoApiKey = "test-key";
+    env.resendApiKey = undefined;
     env.mailFromEmail = "codes@example.com";
     env.googleClientIdWeb = "test-client-id";
     env.requireEmailVerification = true;
@@ -278,6 +280,7 @@ describe("CON-001: every endpoint the app calls returns the shape the app reads"
 
   afterEach(() => {
     env.brevoApiKey = saved.brevoApiKey;
+    env.resendApiKey = saved.resendApiKey;
     env.mailFromEmail = saved.mailFromEmail;
     env.googleClientIdWeb = saved.googleClientIdWeb;
     env.requireEmailVerification = saved.requireEmailVerification;
