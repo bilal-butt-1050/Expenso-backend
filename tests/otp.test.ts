@@ -164,6 +164,11 @@ describe("EML: sending through Resend", () => {
     const payload = JSON.parse(String((init as RequestInit).body));
     expect(payload).toMatchObject({ from: "Expenso <noreply@bilalafzal.dev>", to: [EMAIL], subject: "Your Expenso sign-in code" });
     expect(sent).toEqual([{ to: EMAIL, code: expect.stringMatching(/^\d{6}$/) }]);
+    // A plain-text part carrying the same code, with no markup (HTML-only mail scores as spam).
+    expect(payload.text).toContain(sent[0].code);
+    expect(payload.text).not.toMatch(/<[a-z]/i);
+    // The light layout: no dark background left over from the old design.
+    expect(payload.html).not.toContain("#0B0F19");
   });
 
   it.each([
