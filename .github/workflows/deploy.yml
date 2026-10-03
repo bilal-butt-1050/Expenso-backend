@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Deploy to Oracle VPS via SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d17f967dacf36262 # v1.0.3, pinned: a moved tag can't change what deploys
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USERNAME }}
