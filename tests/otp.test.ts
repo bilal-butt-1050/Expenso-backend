@@ -15,6 +15,7 @@ const IP = "203.0.113.7";
 
 const saved = {
   nodeEnv: process.env.NODE_ENV,
+  resendApiKey: env.resendApiKey,
   brevoApiKey: env.brevoApiKey,
   mailFromEmail: env.mailFromEmail,
   requireEmailVerification: env.requireEmailVerification,
@@ -37,6 +38,8 @@ function brevoResponds(status: number, body: object = {}) {
 
 beforeEach(() => {
   process.env.NODE_ENV = "test";
+  // Brevo unless a test opts into Resend, whatever the developer's own .env holds.
+  env.resendApiKey = undefined;
   env.brevoApiKey = "test-key";
   env.mailFromEmail = "codes@example.com";
   env.requireEmailVerification = false;
@@ -47,6 +50,7 @@ beforeEach(() => {
 
 afterEach(() => {
   process.env.NODE_ENV = saved.nodeEnv;
+  env.resendApiKey = saved.resendApiKey;
   env.brevoApiKey = saved.brevoApiKey;
   env.mailFromEmail = saved.mailFromEmail;
   env.requireEmailVerification = saved.requireEmailVerification;
@@ -130,6 +134,63 @@ describe("EML: sending through Brevo", () => {
       expect(warn.mock.calls.flat().join(" ")).not.toMatch(/\d{6}/);
     }
     expect(error.mock.calls.flat().join(" ")).not.toMatch(/\d{6}/);
+  });
+});
+
+describe("EML: sending through Resend", () => {
+  /** Resend's request shape: `to` is a list of addresses and the body is `html`. */
+  function resendResponds(status: number, body: object = {}) {
+    fetchSpy.mockImplementation(async (_url, init) => {
+      const payload = JSON.parse(String((init as RequestInit).body));
+      sent.push({ to: payload.to[0], code: payload.html.match(/letter-spacing: 8px;[^>]*>(\d{6})</)[1] });
+      return new Response(JSON.stringify(body), { status });
+    });
+  }
+
+  beforeEach(() => {
+    env.resendApiKey = "re_test_key";
+    env.mailFromEmail = "noreply@bilalafzal.dev";
+    resendResponds(200, { id: "49a3999c-0ce1-4ea6-ab68-afcd6dc2e794" });
+  });
+
+  it("EML-010: with a Resend key, Resend is called (not Brevo) from the verified sender", async () => {
+    process.env.NODE_ENV = "production";
+    await generateAndSendOtp(EMAIL, IP);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(url).toBe("https://api.resend.com/emails");
+    expect((init as RequestInit).headers).toMatchObject({ authorization: "Bearer re_test_key" });
+    const payload = JSON.parse(String((init as RequestInit).body));
+    expect(payload).toMatchObject({ from: "Expenso <noreply@bilalafzal.dev>", to: [EMAIL], subject: "Your Expenso sign-in code" });
+    expect(sent).toEqual([{ to: EMAIL, code: expect.stringMatching(/^\d{6}$/) }]);
+  });
+
+  it.each([
+    [401, { statusCode: 401, name: "missing_api_key", message: "Missing API key" }, 503],
+    [403, { statusCode: 403, name: "invalid_api_key", message: "API key is invalid" }, 503],
+    [429, { statusCode: 429, name: "daily_quota_exceeded", message: "quota" }, 503],
+    [422, { statusCode: 422, name: "validation_error", message: "Invalid `from` field" }, 502],
+    [500, { statusCode: 500, name: "internal_server_error", message: "boom" }, 502],
+  ])("EML-011: Resend %i maps to %i with a safe message and one log line", async (status, body, expected) => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    resendResponds(status, body);
+
+    const err = await generateAndSendOtp(EMAIL, IP).catch((e) => e);
+
+    expect(err.statusCode).toBe(expected);
+    expect(err.message).not.toMatch(/resend|key|quota|from/i);
+    const line = String(error.mock.calls[0][0]);
+    expect(line).toContain(`[email] resend ${status} ${body.name}`);
+    expect(line).not.toContain("re_test_key");
+    expect(line).not.toContain(EMAIL);
+  });
+
+  it("EML-012: without a Resend key, Brevo is still used (the fallback during the switch)", async () => {
+    env.resendApiKey = undefined;
+    brevoResponds(201, { messageId: "<m1>" });
+    await generateAndSendOtp(EMAIL, IP);
+    expect(fetchSpy.mock.calls[0][0]).toBe("https://api.brevo.com/v3/smtp/email");
   });
 });
 

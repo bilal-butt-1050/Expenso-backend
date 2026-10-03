@@ -27,13 +27,14 @@ beforeAll(async () => {
 
 afterAll(() => new Promise((resolve) => server.close(resolve)));
 
-const saved = { nodeEnv: process.env.NODE_ENV, brevoApiKey: env.brevoApiKey, mailFromEmail: env.mailFromEmail };
+const saved = { nodeEnv: process.env.NODE_ENV, brevoApiKey: env.brevoApiKey, resendApiKey: env.resendApiKey, mailFromEmail: env.mailFromEmail };
 let fetchSpy: MockInstance<typeof fetch>;
 let sent: { to: string; code: string }[];
 
 beforeEach(() => {
   process.env.NODE_ENV = "test";
   env.brevoApiKey = "test-key";
+  env.resendApiKey = undefined;
   env.mailFromEmail = "codes@example.com";
   sent = [];
   fetchSpy = vi.spyOn(globalThis, "fetch");
@@ -49,6 +50,7 @@ beforeEach(() => {
 afterEach(() => {
   process.env.NODE_ENV = saved.nodeEnv;
   env.brevoApiKey = saved.brevoApiKey;
+  env.resendApiKey = saved.resendApiKey;
   env.mailFromEmail = saved.mailFromEmail;
   vi.restoreAllMocks();
 });

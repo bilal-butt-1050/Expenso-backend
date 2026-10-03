@@ -50,8 +50,8 @@ export function parseTrustProxyHops(raw: string | undefined): number {
   return Number(value);
 }
 
-if (!process.env.BREVO_API_KEY || !process.env.MAIL_FROM_EMAIL) {
-  console.warn("[env] BREVO_API_KEY or MAIL_FROM_EMAIL is not set: signup codes can't be emailed");
+if ((!process.env.RESEND_API_KEY && !process.env.BREVO_API_KEY) || !process.env.MAIL_FROM_EMAIL) {
+  console.warn("[env] No email provider (RESEND_API_KEY or BREVO_API_KEY) or MAIL_FROM_EMAIL: sign-in codes can't be emailed");
 }
 
 export const env = {
@@ -63,9 +63,14 @@ export const env = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "30d",
   corsOrigin: process.env.CORS_ORIGIN ?? "*",
   trustProxyHops: parseTrustProxyHops(process.env.TRUST_PROXY_HOPS),
-  /** Brevo transactional email (D-17, D-21). Without it, OTP email is unavailable in production. */
+  /**
+   * Resend transactional email, sending from a domain verified in Resend (bilalafzal.dev). Preferred
+   * when set: mail from a verified domain reaches Gmail, where Brevo's free-mail sender didn't.
+   */
+  resendApiKey: process.env.RESEND_API_KEY,
+  /** Brevo transactional email (D-17, D-21). The fallback while RESEND_API_KEY is unset. */
   brevoApiKey: process.env.BREVO_API_KEY,
-  /** The sender verified in Brevo. Brevo rewrites a free-mail sender to its own domain. */
+  /** The sender address. With Resend it must be on the verified domain, e.g. noreply@bilalafzal.dev. */
   mailFromEmail: process.env.MAIL_FROM_EMAIL,
   mailFromName: process.env.MAIL_FROM_NAME ?? "Expenso",
   /**
