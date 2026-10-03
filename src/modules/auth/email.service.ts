@@ -21,25 +21,56 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
+/**
+ * A plain white layout, built from tables so every mail client renders it the same, with the code
+ * large and nothing else competing with it. The dark design scored worse with spam filters.
+ */
 function otpEmailHtml(otp: string): string {
   const code = escapeHtml(otp);
-  return `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; margin: 0 auto; background-color: #0B0F19; padding: 40px; border-radius: 20px; border: 1px solid #1F2937; color: #FFFFFF;">
-      <h2 style="color: #FFFFFF; font-size: 24px; font-weight: 700; margin-bottom: 16px; text-align: center;">
-        Welcome to <span style="color: #818CF8;">Expenso</span>
-      </h2>
-      <p style="color: #9CA3AF; font-size: 15px; line-height: 1.5; margin-bottom: 28px; text-align: center;">
-        Your code is below. Enter it in the app to sign in, or to finish creating your account.
-      </p>
-      <div style="background-color: #111827; border: 1px solid #374151; border-radius: 14px; padding: 20px; text-align: center; margin-bottom: 28px;">
-        <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #818CF8;">${code}</span>
-      </div>
-      <p style="color: #9CA3AF; font-size: 13px; text-align: center;">
-        Never share this code. Expenso will never ask you for it.<br />
-        This code expires in 10 minutes. If you didn't request it, you can ignore this email.
-      </p>
-    </div>
-  `;
+  const font = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+  return `<!doctype html>
+<html lang="en">
+  <body style="margin: 0; padding: 0; background-color: #F4F5F7;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #F4F5F7; padding: 32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 480px; background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 12px; font-family: ${font}; color: #111827;">
+            <tr>
+              <td style="padding: 32px 32px 8px; font-size: 20px; font-weight: 700;">Expenso</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 32px 24px; font-size: 15px; line-height: 1.5; color: #374151;">
+                Here's your sign-in code. Enter it in the app to sign in, or to finish creating your account.
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 0 32px;">
+                <div style="font-size: 32px; font-weight: 700; letter-spacing: 8px; text-align: center; padding: 16px 0; background-color: #F4F5F7; border-radius: 8px; color: #111827;">${code}</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 24px 32px 32px; font-size: 13px; line-height: 1.5; color: #6B7280;">
+                This code expires in 10 minutes. If you didn't request it, you can ignore this email.
+                Never share this code with anyone: Expenso will never ask you for it.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+/** The same message as plain text. Mail with only an HTML part is scored as more likely spam. */
+function otpEmailText(otp: string): string {
+  return [
+    `Your Expenso sign-in code is ${otp}`,
+    "",
+    "Enter it in the app to sign in, or to finish creating your account. It expires in 10 minutes.",
+    "",
+    "If you didn't request it, you can ignore this email. Never share this code with anyone: Expenso will never ask you for it.",
+  ].join("\n");
 }
 
 type Provider = "resend" | "brevo";
@@ -67,18 +98,24 @@ function mapSendFailure(provider: Provider, status: number | null, code: string,
 }
 
 /** The HTTP request each provider expects for one email. */
-function requestFor(provider: Provider, apiKey: string, fromEmail: string, to: string, html: string) {
+function requestFor(provider: Provider, apiKey: string, fromEmail: string, to: string, html: string, text: string) {
   const json = { "content-type": "application/json", accept: "application/json" };
   return provider === "resend"
     ? {
         url: RESEND_SEND_URL,
         headers: { ...json, authorization: `Bearer ${apiKey}` },
-        body: { from: `${env.mailFromName} <${fromEmail}>`, to: [to], subject: SUBJECT, html },
+        body: { from: `${env.mailFromName} <${fromEmail}>`, to: [to], subject: SUBJECT, html, text },
       }
     : {
         url: BREVO_SEND_URL,
         headers: { ...json, "api-key": apiKey },
-        body: { sender: { name: env.mailFromName, email: fromEmail }, to: [{ email: to }], subject: SUBJECT, htmlContent: html },
+        body: {
+          sender: { name: env.mailFromName, email: fromEmail },
+          to: [{ email: to }],
+          subject: SUBJECT,
+          htmlContent: html,
+          textContent: text,
+        },
       };
 }
 
@@ -98,7 +135,7 @@ export async function sendOtpEmail(email: string, otp: string): Promise<void> {
     throw new AppError(503, "Email verification is unavailable right now. Please try again later.");
   }
 
-  const request = requestFor(provider, apiKey, fromEmail, email, otpEmailHtml(otp));
+  const request = requestFor(provider, apiKey, fromEmail, email, otpEmailHtml(otp), otpEmailText(otp));
   let response: Response;
   try {
     response = await fetch(request.url, {
